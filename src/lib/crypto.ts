@@ -41,7 +41,7 @@ export async function decryptChunk(
   iv: Uint8Array
 ): Promise<ArrayBuffer> {
   return crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: iv as unknown as ArrayBuffer },
     key,
     encrypted
   );

@@ -20,7 +20,7 @@ export async function saveChunkToOPFS(
   // Save IV
   const ivFile = await videoDir.getFileHandle(`iv_${chunkIndex}`, { create: true });
   const ivWritable = await ivFile.createWritable();
-  await ivWritable.write(iv);
+  await ivWritable.write(new Uint8Array(iv) as unknown as BufferSource);
   await ivWritable.close();
 }
 
