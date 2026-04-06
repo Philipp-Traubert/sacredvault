@@ -1,0 +1,279 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import NeuButton from "./NeuButton";
+import AudioOutputSelector from "./AudioOutputSelector";
+import {
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Minimize,
+  Download,
+  Check,
+  Loader2,
+  ArrowLeft,
+} from "lucide-react";
+import { useOfflineVideo } from "@/hooks/useOfflineVideo";
+
+interface PlayerControlsProps {
+  video: {
+    id: string;
+    title: string;
+    video_url: string;
+  };
+  onBack: () => void;
+}
+
+const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [videoSrc, setVideoSrc] = useState<string>("");
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const { downloadVideo, getOfflineVideoBlob, isVideoOffline, downloadProgress, downloading } =
+    useOfflineVideo();
+
+  const isDownloading = downloading[video.id] || false;
+  const progress = downloadProgress[video.id] || 0;
+
+  useEffect(() => {
+    const loadVideo = async () => {
+      const isOff = await isVideoOffline(video.id);
+      setOffline(isOff);
+
+      if (isOff) {
+        const blob = await getOfflineVideoBlob(video.id);
+        if (blob) {
+          setVideoSrc(URL.createObjectURL(blob));
+          return;
+        }
+      }
+      setVideoSrc(video.video_url);
+    };
+
+    loadVideo();
+    return () => {
+      if (videoSrc.startsWith("blob:")) URL.revokeObjectURL(videoSrc);
+    };
+  }, [video.id, video.video_url]);
+
+  const togglePlay = useCallback(() => {
+    if (!videoRef.current) return;
+    if (playing) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play();
+    }
+    setPlaying(!playing);
+  }, [playing]);
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = Number(e.target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const vol = Number(e.target.value);
+    setVolume(vol);
+    if (videoRef.current) {
+      videoRef.current.volume = vol;
+      setMuted(vol === 0);
+    }
+  };
+
+  const toggleMute = () => {
+    if (videoRef.current) {
+      videoRef.current.muted = !muted;
+      setMuted(!muted);
+    }
+  };
+
+  const toggleFullscreen = async () => {
+    if (!containerRef.current) return;
+    if (!fullscreen) {
+      await containerRef.current.requestFullscreen();
+    } else {
+      await document.exitFullscreen();
+    }
+    setFullscreen(!fullscreen);
+  };
+
+  const handleDownload = async () => {
+    try {
+      await downloadVideo(video.id, video.video_url);
+      setOffline(true);
+    } catch (error) {
+      console.error("Download failed:", error);
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const handleMouseMove = () => {
+    setShowControls(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      if (playing) setShowControls(false);
+    }, 3000);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative bg-foreground/5 rounded-2xl overflow-hidden neu-raised"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => playing && setShowControls(false)}
+    >
+      {/* Back button */}
+      <motion.button
+        initial={{ opacity: 0 }}
+        animate={{ opacity: showControls ? 1 : 0 }}
+        className="absolute top-4 left-4 z-20 p-2 rounded-xl bg-background/80 neu-raised-sm transition-opacity"
+        onClick={onBack}
+      >
+        <ArrowLeft className="w-5 h-5 text-foreground" />
+      </motion.button>
+
+      {/* Video */}
+      <video
+        ref={videoRef}
+        src={videoSrc}
+        className="w-full aspect-video bg-foreground/10 cursor-pointer"
+        onClick={togglePlay}
+        onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
+        onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+        onEnded={() => setPlaying(false)}
+        playsInline
+      />
+
+      {/* Controls overlay */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: showControls ? 1 : 0 }}
+        transition={{ duration: 0.2 }}
+        className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-foreground/30 to-transparent"
+      >
+        {/* Seek bar */}
+        <div className="mb-3">
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.1}
+            value={currentTime}
+            onChange={handleSeek}
+            className="w-full h-1 rounded-full appearance-none cursor-pointer bg-background/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:neu-raised-sm"
+          />
+          <div className="flex justify-between text-xs text-primary-foreground/70 mt-1">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        {/* Controls row */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={togglePlay}
+            className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform"
+          >
+            {playing ? (
+              <Pause className="w-5 h-5 text-foreground" />
+            ) : (
+              <Play className="w-5 h-5 text-foreground ml-0.5" />
+            )}
+          </button>
+
+          {/* Volume */}
+          <div className="flex items-center gap-2 group">
+            <button onClick={toggleMute} className="text-primary-foreground/80 hover:text-primary-foreground">
+              {muted || volume === 0 ? (
+                <VolumeX className="w-4 h-4" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={muted ? 0 : volume}
+              onChange={handleVolume}
+              className="w-20 h-1 rounded-full appearance-none cursor-pointer bg-background/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-foreground"
+            />
+          </div>
+
+          {/* Title */}
+          <span className="text-sm text-primary-foreground/80 truncate flex-1">
+            {video.title}
+          </span>
+
+          {/* Audio Output */}
+          <AudioOutputSelector videoRef={videoRef} />
+
+          {/* Offline toggle */}
+          {offline ? (
+            <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-background/20 text-xs text-primary-foreground/80">
+              <Check className="w-3 h-3" />
+              Offline
+            </div>
+          ) : (
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform disabled:opacity-50"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-4 h-4 text-foreground animate-spin" />
+              ) : (
+                <Download className="w-4 h-4 text-foreground" />
+              )}
+            </button>
+          )}
+
+          {/* Fullscreen */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform"
+          >
+            {fullscreen ? (
+              <Minimize className="w-4 h-4 text-foreground" />
+            ) : (
+              <Maximize className="w-4 h-4 text-foreground" />
+            )}
+          </button>
+        </div>
+
+        {/* Download progress */}
+        {isDownloading && (
+          <div className="mt-2">
+            <div className="h-1 rounded-full bg-background/20 overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+};
+
+export default PlayerControls;
