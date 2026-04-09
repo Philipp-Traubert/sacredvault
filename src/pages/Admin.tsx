@@ -5,7 +5,7 @@ import NeuCard from "@/components/NeuCard";
 import NeuButton from "@/components/NeuButton";
 import NeuInput from "@/components/NeuInput";
 import { supabase } from "@/integrations/supabase/client";
-import { useAccessControl } from "@/hooks/useAccessControl";
+
 import {
   ArrowLeft,
   Check,
