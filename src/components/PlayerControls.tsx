@@ -15,6 +15,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
+import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
 
 interface PlayerControlsProps {
   video: {
@@ -57,7 +58,10 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
           return;
         }
       }
-      setVideoSrc(video.video_url);
+
+      // Use proxy to bypass CORS for external hosts (Wix, etc.)
+      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      setVideoSrc(proxyUrl);
     };
 
     loadVideo();
