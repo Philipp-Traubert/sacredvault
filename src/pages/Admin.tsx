@@ -5,7 +5,7 @@ import NeuCard from "@/components/NeuCard";
 import NeuButton from "@/components/NeuButton";
 import NeuInput from "@/components/NeuInput";
 import { supabase } from "@/integrations/supabase/client";
-import { useAccessControl } from "@/hooks/useAccessControl";
+
 import {
   ArrowLeft,
   Check,
@@ -53,17 +53,12 @@ const Admin = () => {
   const [newVideo, setNewVideo] = useState({ title: "", thumbnail_url: "", video_url: "", duration: "" });
   const [saving, setSaving] = useState(false);
 
-  const { isAdmin } = useAccessControl();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!isAdmin) {
-      navigate("/");
-      return;
-    }
     loadData();
-  }, [isAdmin, tab]);
+  }, [tab]);
 
   const loadData = async () => {
     setLoading(true);
