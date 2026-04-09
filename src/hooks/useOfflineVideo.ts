@@ -64,13 +64,15 @@ export function useOfflineVideo() {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloading, setDownloading] = useState<Record<string, boolean>>({});
 
-  const downloadVideo = useCallback(async (videoId: string, videoUrl: string) => {
+  const downloadVideo = useCallback(async (videoId: string, videoUrl: string, authToken?: string) => {
     setDownloading((prev) => ({ ...prev, [videoId]: true }));
     setDownloadProgress((prev) => ({ ...prev, [videoId]: 0 }));
 
     try {
       const key = await generateEncryptionKey();
-      const response = await fetch(videoUrl);
+      const fetchHeaders: Record<string, string> = {};
+      if (authToken) fetchHeaders["Authorization"] = `Bearer ${authToken}`;
+      const response = await fetch(videoUrl, { headers: fetchHeaders });
       if (!response.ok) throw new Error("Failed to fetch video");
 
       const contentLength = Number(response.headers.get("content-length") || 0);

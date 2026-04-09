@@ -15,6 +15,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
+import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
 
 interface PlayerControlsProps {
   video: {
@@ -46,6 +47,8 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const progress = downloadProgress[video.id] || 0;
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadVideo = async () => {
       const isOff = await isVideoOffline(video.id);
       setOffline(isOff);
@@ -53,15 +56,37 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
       if (isOff) {
         const blob = await getOfflineVideoBlob(video.id);
         if (blob) {
-          setVideoSrc(URL.createObjectURL(blob));
+          if (!cancelled) setVideoSrc(URL.createObjectURL(blob));
           return;
         }
       }
-      setVideoSrc(video.video_url);
+
+      // Proxy the video through our edge function to bypass CORS
+      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      const token = await getAuthToken();
+
+      if (token) {
+        try {
+          const resp = await fetch(proxyUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (resp.ok) {
+            const blob = await resp.blob();
+            if (!cancelled) setVideoSrc(URL.createObjectURL(blob));
+            return;
+          }
+        } catch (e) {
+          console.warn("Proxy fetch failed, falling back to direct URL", e);
+        }
+      }
+
+      // Fallback to direct URL
+      if (!cancelled) setVideoSrc(video.video_url);
     };
 
     loadVideo();
     return () => {
+      cancelled = true;
       if (videoSrc.startsWith("blob:")) URL.revokeObjectURL(videoSrc);
     };
   }, [video.id, video.video_url]);
@@ -112,7 +137,9 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   const handleDownload = async () => {
     try {
-      await downloadVideo(video.id, video.video_url);
+      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      const token = await getAuthToken();
+      await downloadVideo(video.id, proxyUrl, token || undefined);
       setOffline(true);
     } catch (error) {
       console.error("Download failed:", error);
