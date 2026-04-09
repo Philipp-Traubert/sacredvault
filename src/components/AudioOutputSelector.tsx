@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Speaker } from "lucide-react";
+import { Volume1 } from "lucide-react";
 
 interface AudioOutputSelectorProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -53,7 +53,7 @@ const AudioOutputSelector = ({ videoRef }: AudioOutputSelectorProps) => {
         onClick={() => setOpen(!open)}
         className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform"
       >
-        <Speaker className="w-4 h-4 text-foreground" />
+        <Volume1 className="w-4 h-4 text-foreground" />
       </button>
 
       {open && (
