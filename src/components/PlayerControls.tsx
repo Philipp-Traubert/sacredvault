@@ -137,7 +137,9 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   const handleDownload = async () => {
     try {
-      await downloadVideo(video.id, video.video_url);
+      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      const token = await getAuthToken();
+      await downloadVideo(video.id, proxyUrl, token || undefined);
       setOffline(true);
     } catch (error) {
       console.error("Download failed:", error);
