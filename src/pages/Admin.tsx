@@ -53,17 +53,12 @@ const Admin = () => {
   const [newVideo, setNewVideo] = useState({ title: "", thumbnail_url: "", video_url: "", duration: "" });
   const [saving, setSaving] = useState(false);
 
-  const { isAdmin } = useAccessControl();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!isAdmin) {
-      navigate("/");
-      return;
-    }
     loadData();
-  }, [isAdmin, tab]);
+  }, [tab]);
 
   const loadData = async () => {
     setLoading(true);
