@@ -152,10 +152,10 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
       <motion.button
         initial={{ opacity: 0 }}
         animate={{ opacity: showControls ? 1 : 0 }}
-        className="absolute top-4 left-4 z-20 p-2 rounded-xl bg-background/80 neu-raised-sm transition-opacity"
+        className="absolute top-4 left-4 z-20 p-2 rounded-xl backdrop-blur-md bg-white/10 border border-white/20 shadow-lg transition-opacity hover:bg-white/20"
         onClick={onBack}
       >
-        <ArrowLeft className="w-5 h-5 text-foreground" />
+        <ArrowLeft className="w-5 h-5 text-white" />
       </motion.button>
 
       {/* Video */}
@@ -198,12 +198,12 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         <div className="flex items-center gap-3">
           <button
             onClick={togglePlay}
-            className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform"
+            className="p-2 rounded-xl backdrop-blur-md bg-white/10 border border-white/20 shadow-lg hover:bg-white/20 hover:scale-105 transition-all"
           >
             {playing ? (
-              <Pause className="w-5 h-5 text-foreground" />
+              <Pause className="w-5 h-5 text-white" />
             ) : (
-              <Play className="w-5 h-5 text-foreground ml-0.5" />
+              <Play className="w-5 h-5 text-white ml-0.5" />
             )}
           </button>
 
@@ -245,12 +245,12 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
             <button
               onClick={handleDownload}
               disabled={isDownloading}
-              className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform disabled:opacity-50"
+              className="p-2 rounded-xl backdrop-blur-md bg-white/10 border border-white/20 shadow-lg hover:bg-white/20 hover:scale-105 transition-all disabled:opacity-50"
             >
               {isDownloading ? (
-                <Loader2 className="w-4 h-4 text-foreground animate-spin" />
+                <Loader2 className="w-4 h-4 text-white animate-spin" />
               ) : (
-                <Download className="w-4 h-4 text-foreground" />
+                <Download className="w-4 h-4 text-white" />
               )}
             </button>
           )}
@@ -258,12 +258,12 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
           {/* Fullscreen */}
           <button
             onClick={toggleFullscreen}
-            className="p-2 rounded-xl bg-background/80 neu-raised-sm hover:scale-105 transition-transform"
+            className="p-2 rounded-xl backdrop-blur-md bg-white/10 border border-white/20 shadow-lg hover:bg-white/20 hover:scale-105 transition-all"
           >
             {fullscreen ? (
-              <Minimize className="w-4 h-4 text-foreground" />
+              <Minimize className="w-4 h-4 text-white" />
             ) : (
-              <Maximize className="w-4 h-4 text-foreground" />
+              <Maximize className="w-4 h-4 text-white" />
             )}
           </button>
         </div>
