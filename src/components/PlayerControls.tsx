@@ -61,26 +61,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         }
       }
 
-      // Proxy the video through our edge function to bypass CORS
-      const proxyUrl = await getProxiedVideoUrl(video.video_url);
-      const token = await getAuthToken();
-
-      if (token) {
-        try {
-          const resp = await fetch(proxyUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (resp.ok) {
-            const blob = await resp.blob();
-            if (!cancelled) setVideoSrc(URL.createObjectURL(blob));
-            return;
-          }
-        } catch (e) {
-          console.warn("Proxy fetch failed, falling back to direct URL", e);
-        }
-      }
-
-      // Fallback to direct URL
+      // Use direct URL for online playback (video tags handle auth/CORS natively for streaming)
       if (!cancelled) setVideoSrc(video.video_url);
     };
 
