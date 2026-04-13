@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import NeuButton from "./NeuButton";
 import { Play, Download, Check, Loader2, Trash2 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
+import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
 
 interface VideoCardProps {
   video: {
@@ -30,7 +31,9 @@ const VideoCard = ({ video, onPlay }: VideoCardProps) => {
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await downloadVideo(video.id, video.video_url);
+      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      const token = await getAuthToken();
+      await downloadVideo(video.id, proxyUrl, token || undefined);
       setOffline(true);
     } catch (error) {
       console.error("Download failed:", error);
