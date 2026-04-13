@@ -14,6 +14,7 @@ import {
   Loader2,
   ArrowLeft,
 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
 import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
 
@@ -40,7 +41,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [videoSrc, setVideoSrc] = useState<string>("");
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const { downloadVideo, getOfflineVideoBlob, isVideoOffline, downloadProgress, downloading } =
+  const { downloadVideo, getOfflineVideoBlob, removeOfflineVideo, isVideoOffline, downloadProgress, downloading } =
     useOfflineVideo();
 
   const isDownloading = downloading[video.id] || false;
@@ -125,6 +126,14 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     } catch (error) {
       console.error("Download failed:", error);
     }
+  };
+
+  const handleRemoveOffline = async () => {
+    await removeOfflineVideo(video.id);
+    setOffline(false);
+    // Reload with online source
+    if (videoSrc.startsWith("blob:")) URL.revokeObjectURL(videoSrc);
+    setVideoSrc(video.video_url);
   };
 
   const formatTime = (secs: number) => {
@@ -237,10 +246,14 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
           {/* Offline toggle */}
           {offline ? (
-            <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-background/20 text-xs text-primary-foreground/80">
-              <Check className="w-3 h-3" />
-              Offline
-            </div>
+            <button
+              onClick={handleRemoveOffline}
+              className="flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-md bg-white/10 border border-white/20 shadow-lg text-xs text-white hover:bg-red-500/30 hover:border-red-400/40 transition-all"
+              title="Remove offline copy"
+            >
+              <Trash2 className="w-3 h-3" />
+              Remove Offline
+            </button>
           ) : (
             <button
               onClick={handleDownload}
