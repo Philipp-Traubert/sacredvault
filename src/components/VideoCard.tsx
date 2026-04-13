@@ -31,7 +31,7 @@ const VideoCard = ({ video, onPlay }: VideoCardProps) => {
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const proxyUrl = await getProxiedVideoUrl(video.video_url);
+      const proxyUrl = await getProxiedVideoUrl(video.video_url, true);
       const token = await getAuthToken();
       await downloadVideo(video.id, proxyUrl, token || undefined);
       setOffline(true);
