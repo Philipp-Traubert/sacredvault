@@ -73,9 +73,19 @@ export function useOfflineVideo() {
       const fetchHeaders: Record<string, string> = {};
       if (authToken) fetchHeaders["Authorization"] = `Bearer ${authToken}`;
       const response = await fetch(videoUrl, { headers: fetchHeaders });
-      if (!response.ok) throw new Error("Failed to fetch video");
+      if (!response.ok) throw new Error(`Failed to fetch video: ${response.status}`);
 
+      const contentType = response.headers.get("content-type") || "";
       const contentLength = Number(response.headers.get("content-length") || 0);
+
+      // Validate we got actual video data, not a tiny error page
+      if (contentLength > 0 && contentLength < 10000) {
+        throw new Error("Response too small to be a video file");
+      }
+      if (contentType.includes("text/html")) {
+        throw new Error("Got HTML instead of video data — URL may be invalid");
+      }
+
       const reader = response.body!.getReader();
 
       let chunkIndex = 0;
