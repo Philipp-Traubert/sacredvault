@@ -1,5 +1,34 @@
-export async function getOPFSRoot(): Promise<FileSystemDirectoryHandle> {
-  return navigator.storage.getDirectory();
+// Offline video chunk storage using IndexedDB (universal browser support)
+// Previously used OPFS which doesn't work on mobile Safari
+
+const DB_NAME = "video_chunks_db";
+const DB_VERSION = 1;
+const STORE_NAME = "chunks";
+
+function openChunkDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function chunkKey(videoId: string, chunkIndex: number): string {
+  return `${videoId}__chunk_${chunkIndex}`;
+}
+
+function ivKey(videoId: string, chunkIndex: number): string {
+  return `${videoId}__iv_${chunkIndex}`;
+}
+
+function countKey(videoId: string): string {
+  return `${videoId}__count`;
 }
 
 export async function saveChunkToOPFS(
@@ -8,20 +37,22 @@ export async function saveChunkToOPFS(
   data: ArrayBuffer,
   iv: Uint8Array
 ): Promise<void> {
-  const root = await getOPFSRoot();
-  const videoDir = await root.getDirectoryHandle(videoId, { create: true });
-
-  // Save encrypted chunk
-  const chunkFile = await videoDir.getFileHandle(`chunk_${chunkIndex}`, { create: true });
-  const writable = await chunkFile.createWritable();
-  await writable.write(data);
-  await writable.close();
-
-  // Save IV
-  const ivFile = await videoDir.getFileHandle(`iv_${chunkIndex}`, { create: true });
-  const ivWritable = await ivFile.createWritable();
-  await ivWritable.write(new Uint8Array(iv) as unknown as BufferSource);
-  await ivWritable.close();
+  const db = await openChunkDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const store = tx.objectStore(STORE_NAME);
+  store.put(data, chunkKey(videoId, chunkIndex));
+  store.put(Array.from(iv), ivKey(videoId, chunkIndex));
+  // Track max chunk index
+  const getReq = store.get(countKey(videoId));
+  await new Promise<void>((resolve, reject) => {
+    getReq.onsuccess = () => {
+      const current = (getReq.result as number) || 0;
+      store.put(Math.max(current, chunkIndex + 1), countKey(videoId));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
 }
 
 export async function readChunkFromOPFS(
@@ -29,18 +60,26 @@ export async function readChunkFromOPFS(
   chunkIndex: number
 ): Promise<{ data: ArrayBuffer; iv: Uint8Array } | null> {
   try {
-    const root = await getOPFSRoot();
-    const videoDir = await root.getDirectoryHandle(videoId);
+    const db = await openChunkDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
 
-    const chunkFile = await videoDir.getFileHandle(`chunk_${chunkIndex}`);
-    const chunkBlob = await chunkFile.getFile();
-    const data = await chunkBlob.arrayBuffer();
+    const dataReq = store.get(chunkKey(videoId, chunkIndex));
+    const ivReq = store.get(ivKey(videoId, chunkIndex));
 
-    const ivFile = await videoDir.getFileHandle(`iv_${chunkIndex}`);
-    const ivBlob = await ivFile.getFile();
-    const iv = new Uint8Array(await ivBlob.arrayBuffer());
-
-    return { data, iv };
+    return new Promise((resolve) => {
+      tx.oncomplete = () => {
+        if (dataReq.result && ivReq.result) {
+          resolve({
+            data: dataReq.result as ArrayBuffer,
+            iv: new Uint8Array(ivReq.result as number[]),
+          });
+        } else {
+          resolve(null);
+        }
+      };
+      tx.onerror = () => resolve(null);
+    });
   } catch {
     return null;
   }
@@ -48,13 +87,13 @@ export async function readChunkFromOPFS(
 
 export async function getChunkCount(videoId: string): Promise<number> {
   try {
-    const root = await getOPFSRoot();
-    const videoDir = await root.getDirectoryHandle(videoId);
-    let count = 0;
-    for await (const [name] of (videoDir as any).entries()) {
-      if (name.startsWith("chunk_")) count++;
-    }
-    return count;
+    const db = await openChunkDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).get(countKey(videoId));
+    return new Promise((resolve) => {
+      req.onsuccess = () => resolve((req.result as number) || 0);
+      req.onerror = () => resolve(0);
+    });
   } catch {
     return 0;
   }
@@ -62,10 +101,23 @@ export async function getChunkCount(videoId: string): Promise<number> {
 
 export async function deleteVideoFromOPFS(videoId: string): Promise<void> {
   try {
-    const root = await getOPFSRoot();
-    await root.removeEntry(videoId, { recursive: true });
+    const db = await openChunkDB();
+    const count = await getChunkCount(videoId);
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+
+    for (let i = 0; i < count; i++) {
+      store.delete(chunkKey(videoId, i));
+      store.delete(ivKey(videoId, i));
+    }
+    store.delete(countKey(videoId));
+
+    await new Promise<void>((resolve) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
   } catch {
-    // Video not found, ignore
+    // ignore
   }
 }
 
