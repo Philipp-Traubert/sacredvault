@@ -26,6 +26,7 @@ interface AccessRequest {
   email: string;
   status: string;
   created_at: string;
+  user_id: string | null;
 }
 
 interface UserRole {
@@ -84,15 +85,29 @@ const Admin = () => {
   };
 
   const approveRequest = async (request: AccessRequest) => {
-    // Create user account via Supabase auth (admin would need to set up the user)
-    // For now, update status
+    if (!request.user_id) {
+      toast({ title: "Cannot approve", description: "This request has no linked account.", variant: "destructive" });
+      return;
+    }
+
+    // Assign the 'user' role
+    const { error: roleError } = await supabase
+      .from("user_roles")
+      .insert({ user_id: request.user_id, role: "user" });
+
+    if (roleError) {
+      toast({ title: "Failed to assign role", description: roleError.message, variant: "destructive" });
+      return;
+    }
+
+    // Update request status
     const { error } = await supabase
       .from("access_requests")
       .update({ status: "approved" })
       .eq("id", request.id);
 
     if (!error) {
-      toast({ title: "Request approved" });
+      toast({ title: "Request approved", description: "User can now log in and access videos." });
       loadData();
     }
   };
