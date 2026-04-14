@@ -26,6 +26,7 @@ interface AccessRequest {
   email: string;
   status: string;
   created_at: string;
+  user_id: string | null;
 }
 
 interface UserRole {
