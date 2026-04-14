@@ -124,6 +124,18 @@ const Admin = () => {
     }
   };
 
+  const deleteRequest = async (id: string) => {
+    const { error } = await supabase
+      .from("access_requests")
+      .delete()
+      .eq("id", id);
+
+    if (!error) {
+      toast({ title: "Request removed" });
+      loadData();
+    }
+  };
+
   const revokeAccess = async (id: string) => {
     const { error } = await supabase
       .from("user_roles")
@@ -225,17 +237,22 @@ const Admin = () => {
                           {new Date(req.created_at).toLocaleDateString()} · {req.status}
                         </p>
                       </div>
-                      {req.status === "pending" && (
-                        <div className="flex gap-2">
-                          <NeuButton size="sm" variant="primary" onClick={() => approveRequest(req)}>
-                            <Check className="w-3.5 h-3.5" />
-                            Approve
-                          </NeuButton>
-                          <NeuButton size="sm" variant="danger" onClick={() => rejectRequest(req.id)}>
-                            <X className="w-3.5 h-3.5" />
-                          </NeuButton>
-                        </div>
-                      )}
+                      <div className="flex gap-2">
+                        {req.status === "pending" && (
+                          <>
+                            <NeuButton size="sm" variant="primary" onClick={() => approveRequest(req)}>
+                              <Check className="w-3.5 h-3.5" />
+                              Approve
+                            </NeuButton>
+                            <NeuButton size="sm" variant="danger" onClick={() => rejectRequest(req.id)}>
+                              <X className="w-3.5 h-3.5" />
+                            </NeuButton>
+                          </>
+                        )}
+                        <NeuButton size="sm" variant="danger" onClick={() => deleteRequest(req.id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </NeuButton>
+                      </div>
                     </NeuCard>
                   ))
                 )}
