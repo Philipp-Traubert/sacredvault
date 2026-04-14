@@ -13,6 +13,7 @@ const Login = () => {
   const [tab, setTab] = useState<Tab>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [requested, setRequested] = useState(false);
   const { signIn, requestAccess } = useAuth();
@@ -36,9 +37,25 @@ const Login = () => {
 
   const handleRequestAccess = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (password !== confirmPassword) {
+      toast({
+        title: "Passwords don't match",
+        description: "Please make sure both passwords are identical.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (password.length < 8) {
+      toast({
+        title: "Password too short",
+        description: "Password must be at least 8 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
     setLoading(true);
     try {
-      await requestAccess(email);
+      await requestAccess(email, password);
       setRequested(true);
       toast({
         title: "Request sent",
@@ -159,8 +176,28 @@ const Login = () => {
                       onChange={(e) => setEmail(e.target.value)}
                       required
                     />
+                    <NeuInput
+                      label="Set your new password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                    />
+                    <NeuInput
+                      label="Confirm password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                    />
                     <p className="text-xs text-muted-foreground">
-                      Submit your email to request access. An admin will review your request.
+                      Submit your details to request access. An admin will review your request.
+                    </p>
+                    <p className="text-xs text-muted-foreground/60 flex items-center gap-1">
+                      <Lock className="w-3 h-3" />
+                      Your password is encrypted and cannot be recovered — not even by admins.
                     </p>
                     <NeuButton
                       type="submit"
