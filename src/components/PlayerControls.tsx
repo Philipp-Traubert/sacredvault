@@ -107,7 +107,19 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     }
   };
 
-  const toggleFullscreen = async () => {
+  // Sync fullscreen state with browser events
+  useEffect(() => {
+    const onFsChange = () => {
+      setFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+    };
+  }, []);
+
     const vid = videoRef.current;
     if (!vid) return;
 
