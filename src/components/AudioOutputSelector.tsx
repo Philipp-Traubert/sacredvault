@@ -13,8 +13,6 @@ const AudioOutputSelector = ({ videoRef }: AudioOutputSelectorProps) => {
   useEffect(() => {
     const loadDevices = async () => {
       try {
-        // Request permission first
-        await navigator.mediaDevices.getUserMedia({ audio: true });
         const allDevices = await navigator.mediaDevices.enumerateDevices();
         const audioOutputs = allDevices.filter((d) => d.kind === "audiooutput");
         setDevices(audioOutputs);
