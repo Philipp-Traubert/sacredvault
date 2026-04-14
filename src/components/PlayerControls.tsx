@@ -108,16 +108,52 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   };
 
   const toggleFullscreen = async () => {
-    if (!containerRef.current) return;
-    if (!fullscreen) {
-      await containerRef.current.requestFullscreen();
-    } else {
-      await document.exitFullscreen();
+    const vid = videoRef.current;
+    if (!vid) return;
+
+    // iOS Safari: use native video fullscreen
+    if (typeof (vid as any).webkitEnterFullscreen === "function" && !fullscreen) {
+      try {
+        (vid as any).webkitEnterFullscreen();
+        setFullscreen(true);
+        return;
+      } catch { /* fall through */ }
     }
-    setFullscreen(!fullscreen);
+
+    // Standard Fullscreen API on container
+    if (!fullscreen) {
+      try {
+        if (containerRef.current?.requestFullscreen) {
+          await containerRef.current.requestFullscreen();
+        } else if ((containerRef.current as any)?.webkitRequestFullscreen) {
+          (containerRef.current as any).webkitRequestFullscreen();
+        }
+        // Try to lock orientation to landscape
+        try {
+          await (screen.orientation as any).lock("landscape");
+        } catch { /* not supported */ }
+        setFullscreen(true);
+      } catch (e) {
+        console.warn("Fullscreen failed:", e);
+      }
+    } else {
+      try {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        }
+        try {
+          screen.orientation.unlock();
+        } catch { /* ignore */ }
+        setFullscreen(false);
+      } catch { /* ignore */ }
+    }
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     try {
       const proxyUrl = await getProxiedVideoUrl(video.video_url, true);
       const token = await getAuthToken();
