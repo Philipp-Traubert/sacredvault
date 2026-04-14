@@ -47,11 +47,11 @@ const VideoPlayer = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4">
+    <div className="min-h-screen bg-background p-4 flex items-start justify-center overflow-x-hidden">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="max-w-5xl mx-auto"
+        className="max-w-5xl w-full mt-[12vh]"
       >
         <PlayerControls video={video} onBack={() => navigate("/")} />
       </motion.div>
