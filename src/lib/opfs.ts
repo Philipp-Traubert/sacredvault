@@ -1,5 +1,4 @@
 // Offline video chunk storage using IndexedDB (universal browser support)
-// Previously used OPFS which doesn't work on mobile Safari
 
 const DB_NAME = "video_chunks_db";
 const DB_VERSION = 1;
@@ -58,7 +57,6 @@ export async function saveChunkToOPFS(
   const store = tx.objectStore(STORE_NAME);
   store.put(data, chunkKey(videoId, chunkIndex));
   store.put(Array.from(iv), ivKey(videoId, chunkIndex));
-  // Track max chunk index
   const getReq = store.get(countKey(videoId));
   await new Promise<void>((resolve, reject) => {
     getReq.onsuccess = () => {
@@ -164,6 +162,35 @@ export async function readOfflineVideoMeta(videoId: string): Promise<OfflineVide
     });
   } catch {
     return null;
+  }
+}
+
+export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
+  try {
+    const db = await openChunkDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const cursorReq = store.openCursor();
+    const metas: OfflineVideoMeta[] = [];
+
+    return new Promise((resolve) => {
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          if (typeof key === "string" && key.endsWith("__meta")) {
+            const meta = cursor.value as OfflineVideoMeta;
+            if (meta && meta.id) metas.push(meta);
+          }
+          cursor.continue();
+        } else {
+          resolve(metas);
+        }
+      };
+      cursorReq.onerror = () => resolve(metas);
+    });
+  } catch {
+    return [];
   }
 }
 
