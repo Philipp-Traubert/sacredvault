@@ -5,6 +5,14 @@ const DB_NAME = "video_chunks_db";
 const DB_VERSION = 1;
 const STORE_NAME = "chunks";
 
+export interface OfflineVideoMeta {
+  id: string;
+  title: string;
+  thumbnail_url: string | null;
+  video_url: string;
+  duration: string | null;
+}
+
 function openChunkDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -29,6 +37,14 @@ function ivKey(videoId: string, chunkIndex: number): string {
 
 function countKey(videoId: string): string {
   return `${videoId}__count`;
+}
+
+function contentTypeKey(videoId: string): string {
+  return `${videoId}__content_type`;
+}
+
+function metadataKey(videoId: string): string {
+  return `${videoId}__meta`;
 }
 
 export async function saveChunkToOPFS(
@@ -99,6 +115,58 @@ export async function getChunkCount(videoId: string): Promise<number> {
   }
 }
 
+export async function saveVideoContentType(videoId: string, contentType: string): Promise<void> {
+  const db = await openChunkDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  tx.objectStore(STORE_NAME).put(contentType, contentTypeKey(videoId));
+
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function readVideoContentType(videoId: string): Promise<string | null> {
+  try {
+    const db = await openChunkDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).get(contentTypeKey(videoId));
+
+    return new Promise((resolve) => {
+      req.onsuccess = () => resolve((req.result as string) || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveOfflineVideoMeta(video: OfflineVideoMeta): Promise<void> {
+  const db = await openChunkDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  tx.objectStore(STORE_NAME).put(video, metadataKey(video.id));
+
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function readOfflineVideoMeta(videoId: string): Promise<OfflineVideoMeta | null> {
+  try {
+    const db = await openChunkDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).get(metadataKey(videoId));
+
+    return new Promise((resolve) => {
+      req.onsuccess = () => resolve((req.result as OfflineVideoMeta) || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteVideoFromOPFS(videoId: string): Promise<void> {
   try {
     const db = await openChunkDB();
@@ -111,6 +179,8 @@ export async function deleteVideoFromOPFS(videoId: string): Promise<void> {
       store.delete(ivKey(videoId, i));
     }
     store.delete(countKey(videoId));
+    store.delete(contentTypeKey(videoId));
+    store.delete(metadataKey(videoId));
 
     await new Promise<void>((resolve) => {
       tx.oncomplete = () => resolve();

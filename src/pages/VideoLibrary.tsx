@@ -40,7 +40,7 @@ const VideoLibrary = () => {
   }, []);
 
   const handlePlay = (video: Video) => {
-    navigate(`/player/${video.id}`);
+    navigate(`/player/${video.id}`, { state: { video } });
   };
 
   return (

@@ -29,11 +29,12 @@ const VideoCard = ({ video, onPlay }: VideoCardProps) => {
   const isDownloading = downloading[video.id] || false;
 
   const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     try {
       const proxyUrl = await getProxiedVideoUrl(video.video_url, true);
       const token = await getAuthToken();
-      await downloadVideo(video.id, proxyUrl, token || undefined);
+      await downloadVideo(video.id, proxyUrl, token || undefined, video);
       setOffline(true);
     } catch (error) {
       console.error("Download failed:", error);
