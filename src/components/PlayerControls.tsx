@@ -120,6 +120,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     };
   }, []);
 
+  const toggleFullscreen = async () => {
     const vid = videoRef.current;
     if (!vid) return;
 
