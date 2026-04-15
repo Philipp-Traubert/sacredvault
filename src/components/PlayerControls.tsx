@@ -42,6 +42,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
   const objectUrlRef = useRef<string | null>(null);
   const pendingResumeRef = useRef<{ time: number; autoplay: boolean } | null>(null);
+  const errorRetryRef = useRef(false); // prevent infinite error→retry loops
 
   const { downloadVideo, getOfflineVideoBlob, removeOfflineVideo, isVideoOffline, downloadProgress, downloading } =
     useOfflineVideo();
@@ -50,7 +51,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const progress = downloadProgress[video.id] || 0;
 
   const setManagedVideoSrc = useCallback((nextSrc: string) => {
-    if (objectUrlRef.current) {
+    if (objectUrlRef.current && objectUrlRef.current !== nextSrc) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
@@ -70,6 +71,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
       pendingResumeRef.current = { time: resumeTime, autoplay };
       setManagedVideoSrc(URL.createObjectURL(blob));
       setOffline(true);
+      errorRetryRef.current = false; // reset on successful offline load
       return true;
     },
     [getOfflineVideoBlob, setManagedVideoSrc, video.id]
@@ -84,14 +86,16 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
       if (isOff) {
         const blob = await getOfflineVideoBlob(video.id);
-        if (blob) {
-          if (!cancelled) setManagedVideoSrc(URL.createObjectURL(blob));
+        if (blob && !cancelled) {
+          setManagedVideoSrc(URL.createObjectURL(blob));
           return;
         }
       }
 
-      // Use direct URL for online playback (video tags handle auth/CORS natively for streaming)
-      if (!cancelled) setManagedVideoSrc(video.video_url);
+      // Only use network URL if we're online
+      if (navigator.onLine && !cancelled) {
+        setManagedVideoSrc(video.video_url);
+      }
     };
 
     loadVideo();
@@ -107,7 +111,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   useEffect(() => {
     const handleOffline = async () => {
-      if (objectUrlRef.current) return;
+      if (objectUrlRef.current) return; // already using blob
 
       const hasOfflineCopy = await isVideoOffline(video.id);
       if (!hasOfflineCopy) return;
@@ -157,7 +161,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     }
   };
 
-  // Sync fullscreen state with browser events
   useEffect(() => {
     const onFsChange = () => {
       setFullscreen(!!document.fullscreenElement);
@@ -181,7 +184,9 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   }, []);
 
   const handleVideoError = useCallback(async () => {
-    if (objectUrlRef.current) return;
+    // Already using offline blob or already tried — don't loop
+    if (objectUrlRef.current || errorRetryRef.current) return;
+    errorRetryRef.current = true;
 
     const hasOfflineCopy = await isVideoOffline(video.id);
     if (!hasOfflineCopy) return;
@@ -194,7 +199,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     const vid = videoRef.current;
     if (!vid) return;
 
-    // iOS Safari: use native video fullscreen
     if (typeof (vid as any).webkitEnterFullscreen === "function" && !fullscreen) {
       try {
         (vid as any).webkitEnterFullscreen();
@@ -203,7 +207,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
       } catch { /* fall through */ }
     }
 
-    // Standard Fullscreen API on container
     if (!fullscreen) {
       try {
         if (containerRef.current?.requestFullscreen) {
@@ -211,7 +214,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         } else if ((containerRef.current as any)?.webkitRequestFullscreen) {
           (containerRef.current as any).webkitRequestFullscreen();
         }
-        // Try to lock orientation to landscape
         try {
           await (screen.orientation as any).lock("landscape");
         } catch { /* not supported */ }
@@ -257,8 +259,10 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const handleRemoveOffline = async () => {
     await removeOfflineVideo(video.id);
     setOffline(false);
-    // Reload with online source
-    setManagedVideoSrc(video.video_url);
+    errorRetryRef.current = false;
+    if (navigator.onLine) {
+      setManagedVideoSrc(video.video_url);
+    }
   };
 
   const formatTime = (secs: number) => {

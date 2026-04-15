@@ -6,6 +6,7 @@ import NeuButton from "@/components/NeuButton";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccessControl } from "@/hooks/useAccessControl";
+import { getAllOfflineVideoMetas, type OfflineVideoMeta } from "@/lib/opfs";
 import { LogOut, Shield, Film } from "lucide-react";
 
 interface Video {
@@ -25,14 +26,49 @@ const VideoLibrary = () => {
 
   useEffect(() => {
     const fetchVideos = async () => {
+      // Try network first
       const { data, error } = await supabase
         .from("videos")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         setVideos(data);
+        // Cache in localStorage for offline
+        try {
+          localStorage.setItem("video_vault_videos_cache", JSON.stringify(data));
+        } catch { /* ignore */ }
+        setLoading(false);
+        return;
       }
+
+      // Fallback 1: localStorage cache
+      try {
+        const cached = localStorage.getItem("video_vault_videos_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached) as Video[];
+          if (parsed.length > 0) {
+            setVideos(parsed);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Fallback 2: offline video metadata from IndexedDB
+      try {
+        const offlineMetas = await getAllOfflineVideoMetas();
+        if (offlineMetas.length > 0) {
+          setVideos(offlineMetas.map((m: OfflineVideoMeta) => ({
+            id: m.id,
+            title: m.title,
+            thumbnail_url: m.thumbnail_url || "",
+            video_url: m.video_url,
+            duration: m.duration || "",
+          })));
+        }
+      } catch { /* ignore */ }
+
       setLoading(false);
     };
 
