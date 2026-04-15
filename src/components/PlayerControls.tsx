@@ -40,12 +40,40 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [offline, setOffline] = useState(false);
   const [videoSrc, setVideoSrc] = useState<string>("");
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
+  const objectUrlRef = useRef<string | null>(null);
+  const pendingResumeRef = useRef<{ time: number; autoplay: boolean } | null>(null);
 
   const { downloadVideo, getOfflineVideoBlob, removeOfflineVideo, isVideoOffline, downloadProgress, downloading } =
     useOfflineVideo();
 
   const isDownloading = downloading[video.id] || false;
   const progress = downloadProgress[video.id] || 0;
+
+  const setManagedVideoSrc = useCallback((nextSrc: string) => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+
+    if (nextSrc.startsWith("blob:")) {
+      objectUrlRef.current = nextSrc;
+    }
+
+    setVideoSrc(nextSrc);
+  }, []);
+
+  const loadOfflineSource = useCallback(
+    async (resumeTime = 0, autoplay = false) => {
+      const blob = await getOfflineVideoBlob(video.id);
+      if (!blob) return false;
+
+      pendingResumeRef.current = { time: resumeTime, autoplay };
+      setManagedVideoSrc(URL.createObjectURL(blob));
+      setOffline(true);
+      return true;
+    },
+    [getOfflineVideoBlob, setManagedVideoSrc, video.id]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -57,31 +85,53 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
       if (isOff) {
         const blob = await getOfflineVideoBlob(video.id);
         if (blob) {
-          if (!cancelled) setVideoSrc(URL.createObjectURL(blob));
+          if (!cancelled) setManagedVideoSrc(URL.createObjectURL(blob));
           return;
         }
       }
 
       // Use direct URL for online playback (video tags handle auth/CORS natively for streaming)
-      if (!cancelled) setVideoSrc(video.video_url);
+      if (!cancelled) setManagedVideoSrc(video.video_url);
     };
 
     loadVideo();
     return () => {
       cancelled = true;
-      if (videoSrc.startsWith("blob:")) URL.revokeObjectURL(videoSrc);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
     };
-  }, [video.id, video.video_url]);
+  }, [getOfflineVideoBlob, isVideoOffline, setManagedVideoSrc, video.id, video.video_url]);
+
+  useEffect(() => {
+    const handleOffline = async () => {
+      if (objectUrlRef.current) return;
+
+      const hasOfflineCopy = await isVideoOffline(video.id);
+      if (!hasOfflineCopy) return;
+
+      const currentVideo = videoRef.current;
+      await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
+    };
+
+    window.addEventListener("offline", handleOffline);
+    return () => window.removeEventListener("offline", handleOffline);
+  }, [isVideoOffline, loadOfflineSource, video.id]);
 
   const togglePlay = useCallback(() => {
-    if (!videoRef.current) return;
-    if (playing) {
-      videoRef.current.pause();
+    const currentVideo = videoRef.current;
+    if (!currentVideo) return;
+
+    if (currentVideo.paused) {
+      void currentVideo.play().catch((error) => {
+        console.warn("Play failed:", error);
+      });
     } else {
-      videoRef.current.play();
+      currentVideo.pause();
     }
-    setPlaying(!playing);
-  }, [playing]);
+  }, []);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = Number(e.target.value);
@@ -112,13 +162,33 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     const onFsChange = () => {
       setFullscreen(!!document.fullscreenElement);
     };
+
+    const videoElement = videoRef.current;
+    const onWebkitBeginFullscreen = () => setFullscreen(true);
+    const onWebkitEndFullscreen = () => setFullscreen(false);
+
     document.addEventListener("fullscreenchange", onFsChange);
     document.addEventListener("webkitfullscreenchange", onFsChange);
+    videoElement?.addEventListener("webkitbeginfullscreen", onWebkitBeginFullscreen as EventListener);
+    videoElement?.addEventListener("webkitendfullscreen", onWebkitEndFullscreen as EventListener);
+
     return () => {
       document.removeEventListener("fullscreenchange", onFsChange);
       document.removeEventListener("webkitfullscreenchange", onFsChange);
+      videoElement?.removeEventListener("webkitbeginfullscreen", onWebkitBeginFullscreen as EventListener);
+      videoElement?.removeEventListener("webkitendfullscreen", onWebkitEndFullscreen as EventListener);
     };
   }, []);
+
+  const handleVideoError = useCallback(async () => {
+    if (objectUrlRef.current) return;
+
+    const hasOfflineCopy = await isVideoOffline(video.id);
+    if (!hasOfflineCopy) return;
+
+    const currentVideo = videoRef.current;
+    await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
+  }, [isVideoOffline, loadOfflineSource, video.id]);
 
   const toggleFullscreen = async () => {
     const vid = videoRef.current;
@@ -170,8 +240,15 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     try {
       const proxyUrl = await getProxiedVideoUrl(video.video_url, true);
       const token = await getAuthToken();
-      await downloadVideo(video.id, proxyUrl, token || undefined);
-      setOffline(true);
+      const currentVideo = videoRef.current;
+      await downloadVideo(video.id, proxyUrl, token || undefined, {
+        id: video.id,
+        title: video.title,
+        thumbnail_url: null,
+        video_url: video.video_url,
+        duration: null,
+      });
+      await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
     } catch (error) {
       console.error("Download failed:", error);
     }
@@ -181,8 +258,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     await removeOfflineVideo(video.id);
     setOffline(false);
     // Reload with online source
-    if (videoSrc.startsWith("blob:")) URL.revokeObjectURL(videoSrc);
-    setVideoSrc(video.video_url);
+    setManagedVideoSrc(video.video_url);
   };
 
   const formatTime = (secs: number) => {
@@ -222,9 +298,33 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         src={videoSrc}
         className="w-full aspect-video bg-foreground/10 cursor-pointer"
         onClick={togglePlay}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+        onLoadedMetadata={() => {
+          const currentVideo = videoRef.current;
+          setDuration(currentVideo?.duration || 0);
+
+          const pendingResume = pendingResumeRef.current;
+          if (!currentVideo || !pendingResume) return;
+
+          const safeTime = Number.isFinite(currentVideo.duration)
+            ? Math.min(pendingResume.time, currentVideo.duration || pendingResume.time)
+            : pendingResume.time;
+
+          currentVideo.currentTime = safeTime;
+          setCurrentTime(safeTime);
+
+          if (pendingResume.autoplay) {
+            void currentVideo.play().catch((error) => {
+              console.warn("Resume play failed:", error);
+            });
+          }
+
+          pendingResumeRef.current = null;
+        }}
         onEnded={() => setPlaying(false)}
+        onError={() => void handleVideoError()}
         playsInline
       />
 

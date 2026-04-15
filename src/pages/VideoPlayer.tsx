@@ -1,20 +1,42 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import PlayerControls from "@/components/PlayerControls";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
+import { readOfflineVideoMeta } from "@/lib/opfs";
+
+interface Video {
+  id: string;
+  title: string;
+  thumbnail_url: string | null;
+  video_url: string;
+  duration: string | null;
+}
 
 const VideoPlayer = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [video, setVideo] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const location = useLocation();
+  const routeVideo = (location.state as { video?: Video } | null)?.video;
+  const [video, setVideo] = useState<Video | null>(routeVideo ?? null);
+  const [loading, setLoading] = useState(!routeVideo);
 
   useEffect(() => {
     if (!id) return;
 
     const fetchVideo = async () => {
+      const localVideo = routeVideo?.id === id ? routeVideo : await readOfflineVideoMeta(id);
+
+      if (localVideo) {
+        setVideo(localVideo);
+        setLoading(false);
+
+        if (!navigator.onLine) {
+          return;
+        }
+      }
+
       const { data, error } = await supabase
         .from("videos")
         .select("*")
@@ -23,12 +45,14 @@ const VideoPlayer = () => {
 
       if (!error && data) {
         setVideo(data);
+      } else if (!localVideo) {
+        setVideo(null);
       }
       setLoading(false);
     };
 
     fetchVideo();
-  }, [id]);
+  }, [id, routeVideo]);
 
   if (loading) {
     return (
