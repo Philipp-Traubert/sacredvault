@@ -1,115 +1,55 @@
 
 
-# Encrypted Offline Video PWA — Updated Plan
+## The Simpler, Dumber Plan
 
-## Design System: Elegant Neumorphism
+The current offline flow is failing on mobile because it's too clever:
+- We chunk videos, encrypt each chunk with AES-GCM, decrypt all chunks into RAM, build a Blob → mobile Safari/Brave often OOM or hang on bigger videos.
+- The player has 4 places that swap the video source (mount effect, offline event, network error, manual download) — they fight each other and cause iOS to reload the page.
+- When offline, the role check sometimes still flips `hasAccess` back to `false`, kicking the user to the "Access Requested" screen.
 
-White background (#f0f0f3) with soft inset/outset shadows creating depth. No harsh borders — depth comes from light/shadow pairs only.
+I want to rip all of that out and replace it with the dumbest version that works.
 
-**Shadow tokens:**
-- Raised: `shadow-[6px_6px_12px_#d1d1d4,-6px_-6px_12px_#ffffff]`
-- Inset/pressed: `shadow-[inset_4px_4px_8px_#d1d1d4,inset_-4px_-4px_8px_#ffffff]`
-- Hover: scale(1.02) + slightly deeper shadow, 200ms ease
+### What changes
 
-**Colors:** Near-white bg `#f0f0f3`, foreground `#2d3436`, muted text `#636e72`, accent `#6c5ce7` (soft purple). All controls use neumorphic raised/pressed states.
+**1. Stop encrypting offline videos. Store one raw Blob per video.**
+- Remove `src/lib/crypto.ts` usage from the offline path.
+- `src/lib/opfs.ts` becomes a tiny IndexedDB wrapper with three functions: `saveOfflineVideo(id, meta, blob)`, `getOfflineVideo(id)`, `deleteOfflineVideo(id)`, plus `getAllOfflineMetas()` and `isVideoOffline(id)`.
+- IndexedDB stores Blobs natively, so no chunking, no decrypt loop, no memory spike. Reading is one `get()`.
+- Security note for the user: the offline copy lives inside the browser's private IndexedDB for this site. It is only accessible to someone logged into the device's browser profile — same protection level as cached YouTube videos. The login password remains hashed server-side; that part doesn't change.
 
-**Typography:** Inter font, clean weights (400/500/600).
+**2. Rewrite `useOfflineVideo` to be ~40 lines.**
+- `downloadVideo`: `fetch` the proxied URL → `await response.blob()` → `saveOfflineVideo(id, meta, blob)`. Progress comes from a streaming reader that just counts bytes (no per-chunk crypto work).
+- `getOfflineVideoBlob(id)`: one IndexedDB read.
+- `removeOfflineVideo(id)`: one IndexedDB delete.
 
-**Animations:**
-- Page transitions: fade-in with subtle translateY (10px → 0, 300ms)
-- Buttons: pressed state = inset shadow on click, 150ms
-- Cards: hover lifts with deeper shadow + scale(1.02), 200ms
-- Video controls: smooth opacity transitions on hover
-- Download progress: animated gradient shimmer on progress bar
-- Toast notifications: slide-in from top with fade
+**3. Single, dumb source rule in `PlayerControls`.**
+- On mount: check `isVideoOffline(id)`. If yes → set `videoSrc = URL.createObjectURL(blob)`. If no → set `videoSrc = video.video_url`. Done.
+- Delete the `online`/`offline` event listener that swaps source.
+- Delete the `onError → swap to offline` retry path.
+- Delete `errorRetryRef`, `pendingResumeRef`, the dual code paths.
+- After a successful download, just call the same "load offline" function once — no resume-time juggling.
+- Result: the `<video>` element gets exactly one `src` per mount. No reload loop possible.
 
----
+**4. Make offline access bulletproof in `useAccessControl`.**
+- If a cached role exists in `localStorage`, set `hasAccess=true` and `loading=false` immediately and **never set `hasAccess=false` afterwards** unless a network call explicitly returns "no role" (not just a network error).
+- This stops the airplane-mode "Access Requested" flash.
 
-## Pages
+**5. Small cleanups**
+- Remove `src/lib/crypto.ts` (or leave it unused — your call, I'll just stop importing it).
+- Keep `videoProxy.ts` as-is for streaming + downloads.
+- Keep the localStorage videos cache and IndexedDB metadata fallback in `VideoLibrary` — those are working.
 
-### 1. Login / Request Access
-- Centered neumorphic card on clean white canvas
-- Soft tab toggle between "Login" and "Request Access"
-- Inputs with inset neumorphic styling
-- Submit button with raised → pressed state on click
-- Pending access state: subtle pulsing icon + message
+### Files touched
 
-### 2. Video Library
-- Grid of neumorphic video cards with thumbnail, title, duration
-- Offline status badge (soft pill shape)
-- Download button with circular progress indicator
-- Hover: card lifts with deeper shadow
+- `src/lib/opfs.ts` — replace with simple Blob-per-video IndexedDB store
+- `src/hooks/useOfflineVideo.ts` — rewrite, no crypto, no chunking
+- `src/components/PlayerControls.tsx` — one source, no swapping, no error-retry
+- `src/components/VideoCard.tsx` — minor: still uses the same hook API
+- `src/pages/VideoLibrary.tsx` — minor: `getAllOfflineMetas` rename
+- `src/pages/VideoPlayer.tsx` — minor: `readOfflineVideoMeta` rename
+- `src/hooks/useAccessControl.ts` — never downgrade `hasAccess` after a cache hit
 
-### 3. Video Player
-- Full-width player area with neumorphic container
-- Custom controls bar: play/pause, seek, volume slider, audio output dropdown
-- All controls use neumorphic raised/pressed styling
-- "Save Offline" toggle button with smooth state transition
-- Download progress shown as neumorphic progress bar with shimmer
+### Trade-off you should know about
 
-### 4. Admin Panel
-- Tab navigation: Requests | Users | Videos
-- Neumorphic list items for each entry
-- Accept/Reject and Revoke buttons with color-coded soft shadows
-- Add video form with neumorphic inputs
-
----
-
-## Technical Architecture (unchanged from prior plan)
-
-### Auth & Access Control
-- Supabase Auth (email/password)
-- `access_requests` table, `user_roles` table with RLS
-- `has_role()` security definer function
-
-### Encrypted Offline Storage
-- OPFS for large file storage (up to 3GB per video)
-- AES-256-GCM via Web Crypto API, chunk-based encrypt/decrypt
-- Keys in IndexedDB, tied to session; deleted on access revocation
-
-### PWA
-- `vite-plugin-pwa` for installability and app shell caching
-- Service worker handles offline detection and playback switching
-
-### Video Player
-- HTML5 video with custom neumorphic controls
-- `setSinkId()` for audio output selection
-- Stream from URL or decrypt from OPFS based on connectivity
-
----
-
-## File Structure (new files)
-
-```
-src/
-  pages/
-    Login.tsx
-    VideoLibrary.tsx
-    VideoPlayer.tsx
-    Admin.tsx
-  components/
-    NeuCard.tsx          (reusable neumorphic card)
-    NeuButton.tsx        (raised/pressed button)
-    NeuInput.tsx         (inset input)
-    VideoCard.tsx
-    PlayerControls.tsx
-    AudioOutputSelector.tsx
-    DownloadButton.tsx
-    AccessRequestList.tsx
-    UserList.tsx
-    VideoManager.tsx
-  hooks/
-    useOfflineVideo.ts   (OPFS + encryption logic)
-    useAuth.ts
-    useAccessControl.ts
-  lib/
-    crypto.ts            (AES-GCM encrypt/decrypt)
-    opfs.ts              (OPFS read/write helpers)
-  service-worker.ts
-```
-
-### Supabase Tables
-- `access_requests` (id, email, status, created_at)
-- `user_roles` (id, user_id, role)
-- `videos` (id, title, thumbnail_url, video_url, duration, created_at)
+The offline copy is no longer AES-encrypted at rest. It still lives in the browser's private IndexedDB sandbox (not accessible to other sites or other OS apps without root/jailbreak), and the login password remains encrypted on the server. If you want the AES layer back later, we can add it as a single whole-file encrypt/decrypt instead of per-chunk — but the current per-chunk version is exactly what's killing mobile playback, so I want to remove it now and only re-add encryption if you really need it.
 
