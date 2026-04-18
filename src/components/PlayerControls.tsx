@@ -37,6 +37,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [showControls, setShowControls] = useState(true);
   const [offline, setOffline] = useState(false);
   const [videoSrc, setVideoSrc] = useState<string>("");
+  const [loadError, setLoadError] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
   const objectUrlRef = useRef<string | null>(null);
 
@@ -48,11 +49,11 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   // Single source rule: pick once on mount. Offline copy wins. No swapping.
   const loadSource = useCallback(async () => {
-    // Clean up any prior blob URL
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    setLoadError(false);
 
     const blob = await getOfflineVideoBlob(video.id);
     if (blob) {
@@ -64,7 +65,20 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     }
 
     setOffline(false);
-    setVideoSrc(video.video_url);
+    if (!navigator.onLine) {
+      // No offline copy and no network — show clear error
+      setVideoSrc("");
+      setLoadError(true);
+      return;
+    }
+
+    // Online: route through proxy
+    try {
+      const proxied = await getProxiedVideoUrl(video.video_url, false);
+      setVideoSrc(proxied);
+    } catch {
+      setVideoSrc(video.video_url);
+    }
   }, [getOfflineVideoBlob, video.id, video.video_url]);
 
   useEffect(() => {
@@ -232,19 +246,31 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         <ArrowLeft className="w-5 h-5 text-white" />
       </motion.button>
 
-      {/* Video */}
-      <video
-        ref={videoRef}
-        src={videoSrc}
-        className="w-full aspect-video bg-foreground/10 cursor-pointer"
-        onClick={togglePlay}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
-        onEnded={() => setPlaying(false)}
-        playsInline
-      />
+      {/* Video or error */}
+      {loadError ? (
+        <div className="w-full aspect-video bg-foreground/10 flex items-center justify-center p-4">
+          <p className="text-sm text-center text-muted-foreground">
+            Offline copy unavailable. Connect to the internet or download this video first.
+          </p>
+        </div>
+      ) : (
+        <video
+          ref={videoRef}
+          src={videoSrc}
+          className="w-full aspect-video bg-foreground/10 cursor-pointer"
+          onClick={togglePlay}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
+          onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+          onEnded={() => setPlaying(false)}
+          onError={() => {
+            // If the video element fails (e.g. lost network mid-play with no offline copy)
+            if (!offline) setLoadError(true);
+          }}
+          playsInline
+        />
+      )}
 
       {/* Controls overlay */}
       <motion.div
