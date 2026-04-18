@@ -1,10 +1,19 @@
-import { useState, useEffect } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode, createElement } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 
 export type AppRole = "admin" | "user";
 
 const ROLE_CACHE_KEY = "video_vault_role_cache";
+
+interface AccessContextValue {
+  role: AppRole | null;
+  isAdmin: boolean;
+  hasAccess: boolean;
+  loading: boolean;
+}
+
+const AccessContext = createContext<AccessContextValue | undefined>(undefined);
 
 function getCachedRole(userId: string): AppRole | null {
   try {
@@ -22,13 +31,15 @@ function setCachedRole(userId: string, role: AppRole) {
   } catch { /* ignore */ }
 }
 
-export function useAccessControl() {
-  const { user } = useAuth();
+export function AccessProvider({ children }: { children: ReactNode }) {
+  const { user, loading: authLoading } = useAuth();
   const [role, setRole] = useState<AppRole | null>(null);
-  const [loading, setLoading] = useState(true);
   const [hasAccess, setHasAccess] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading) return;
+
     if (!user) {
       setRole(null);
       setHasAccess(false);
@@ -36,7 +47,7 @@ export function useAccessControl() {
       return;
     }
 
-    // Cache hit → trust it immediately and never downgrade on network errors
+    // Trust cache immediately. Never downgrade unless server explicitly says no.
     const cached = getCachedRole(user.id);
     if (cached) {
       setRole(cached);
@@ -44,7 +55,7 @@ export function useAccessControl() {
       setLoading(false);
     }
 
-    const fetchRole = async () => {
+    (async () => {
       try {
         const { data, error } = await supabase
           .from("user_roles")
@@ -57,30 +68,43 @@ export function useAccessControl() {
           if (!cached) {
             setRole(null);
             setHasAccess(false);
+            setLoading(false);
           }
-        } else if (data) {
-          setRole(data.role as AppRole);
+          return;
+        }
+
+        if (data) {
+          const r = data.role as AppRole;
+          setRole(r);
           setHasAccess(true);
-          setCachedRole(user.id, data.role as AppRole);
-        } else {
-          // Explicit "no role" from server — only then revoke
+          setCachedRole(user.id, r);
+        } else if (!cached) {
+          // Only revoke if no cache AND server explicitly says no role
           setRole(null);
           setHasAccess(false);
         }
+        setLoading(false);
       } catch {
-        // Network error — keep cached role if available, never demote
         if (!cached) {
           setRole(null);
           setHasAccess(false);
+          setLoading(false);
         }
       }
-      setLoading(false);
-    };
-
-    fetchRole();
-  }, [user]);
+    })();
+  }, [user, authLoading]);
 
   const isAdmin = role === "admin";
 
-  return { role, isAdmin, hasAccess, loading };
+  return createElement(
+    AccessContext.Provider,
+    { value: { role, isAdmin, hasAccess, loading } },
+    children
+  );
+}
+
+export function useAccessControl(): AccessContextValue {
+  const ctx = useContext(AccessContext);
+  if (!ctx) throw new Error("useAccessControl must be used within AccessProvider");
+  return ctx;
 }

@@ -1,5 +1,5 @@
 // Simple offline video storage: one Blob per video in IndexedDB.
-// No chunking, no encryption — IndexedDB stores Blobs natively.
+// Metadata is only stored after the blob is verified saved.
 
 const DB_NAME = "video_vault_offline";
 const DB_VERSION = 1;
@@ -33,12 +33,30 @@ export async function saveOfflineVideo(
   blob: Blob
 ): Promise<void> {
   const db = await openDB();
-  const tx = db.transaction([VIDEO_STORE, META_STORE], "readwrite");
-  tx.objectStore(VIDEO_STORE).put(blob, id);
-  tx.objectStore(META_STORE).put(meta, id);
+  // Step 1: write blob first
+  const tx1 = db.transaction(VIDEO_STORE, "readwrite");
+  tx1.objectStore(VIDEO_STORE).put(blob, id);
   await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx1.oncomplete = () => resolve();
+    tx1.onerror = () => reject(tx1.error);
+    tx1.onabort = () => reject(tx1.error);
+  });
+
+  // Step 2: verify blob is readable
+  const verified = await getOfflineVideo(id);
+  if (!verified || verified.size < 10000) {
+    // Clean up bad blob
+    await deleteOfflineVideo(id);
+    throw new Error("Failed to verify saved video blob");
+  }
+
+  // Step 3: only now write metadata
+  const tx2 = db.transaction(META_STORE, "readwrite");
+  tx2.objectStore(META_STORE).put(meta, id);
+  await new Promise<void>((resolve, reject) => {
+    tx2.oncomplete = () => resolve();
+    tx2.onerror = () => reject(tx2.error);
+    tx2.onabort = () => reject(tx2.error);
   });
 }
 
@@ -48,7 +66,14 @@ export async function getOfflineVideo(id: string): Promise<Blob | null> {
     const tx = db.transaction(VIDEO_STORE, "readonly");
     const req = tx.objectStore(VIDEO_STORE).get(id);
     return new Promise((resolve) => {
-      req.onsuccess = () => resolve((req.result as Blob) || null);
+      req.onsuccess = () => {
+        const result = req.result as Blob | undefined;
+        if (!result || !(result instanceof Blob) || result.size < 10000) {
+          resolve(null);
+        } else {
+          resolve(result);
+        }
+      };
       req.onerror = () => resolve(null);
     });
   } catch {
@@ -71,21 +96,20 @@ export async function deleteOfflineVideo(id: string): Promise<void> {
   }
 }
 
+/**
+ * A video is "offline" only if a real, readable blob exists.
+ * Metadata alone is not enough.
+ */
 export async function isVideoOffline(id: string): Promise<boolean> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(VIDEO_STORE, "readonly");
-    const req = tx.objectStore(VIDEO_STORE).getKey(id);
-    return new Promise((resolve) => {
-      req.onsuccess = () => resolve(req.result !== undefined);
-      req.onerror = () => resolve(false);
-    });
-  } catch {
-    return false;
-  }
+  const blob = await getOfflineVideo(id);
+  return blob !== null;
 }
 
 export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta | null> {
+  // Only return meta if blob also exists — keep them coupled
+  const blob = await getOfflineVideo(id);
+  if (!blob) return null;
+
   try {
     const db = await openDB();
     const tx = db.transaction(META_STORE, "readonly");
@@ -102,12 +126,19 @@ export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta
 export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
   try {
     const db = await openDB();
+    // Get all metas, then filter to only those with a real blob
     const tx = db.transaction(META_STORE, "readonly");
     const req = tx.objectStore(META_STORE).getAll();
-    return new Promise((resolve) => {
+    const metas = await new Promise<OfflineVideoMeta[]>((resolve) => {
       req.onsuccess = () => resolve((req.result as OfflineVideoMeta[]) || []);
       req.onerror = () => resolve([]);
     });
+
+    const verified: OfflineVideoMeta[] = [];
+    for (const meta of metas) {
+      if (await isVideoOffline(meta.id)) verified.push(meta);
+    }
+    return verified;
   } catch {
     return [];
   }

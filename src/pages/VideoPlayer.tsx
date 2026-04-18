@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import PlayerControls from "@/components/PlayerControls";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
-import { readOfflineVideoMeta } from "@/lib/opfs";
+import { readOfflineVideoMeta, isVideoOffline } from "@/lib/opfs";
 
 interface Video {
   id: string;
@@ -21,37 +21,54 @@ const VideoPlayer = () => {
   const routeVideo = (location.state as { video?: Video } | null)?.video;
   const [video, setVideo] = useState<Video | null>(routeVideo ?? null);
   const [loading, setLoading] = useState(!routeVideo);
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
 
-    const fetchVideo = async () => {
-      const localVideo = routeVideo?.id === id ? routeVideo : await readOfflineVideoMeta(id);
-
-      if (localVideo) {
-        setVideo(localVideo);
-        setLoading(false);
-
-        if (!navigator.onLine) {
+    const load = async () => {
+      // 1. If we have an offline blob, prefer offline metadata and skip backend
+      const offline = await isVideoOffline(id);
+      if (offline) {
+        const localMeta = await readOfflineVideoMeta(id);
+        if (localMeta && !cancelled) {
+          setVideo(localMeta);
+          setLoading(false);
           return;
         }
       }
 
-      const { data, error } = await supabase
-        .from("videos")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (!error && data) {
-        setVideo(data);
-      } else if (!localVideo) {
-        setVideo(null);
+      // 2. We already have route state — use it
+      if (routeVideo?.id === id) {
+        if (!cancelled) setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      // 3. Fall back to backend
+      try {
+        const { data, error } = await supabase
+          .from("videos")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (!error && data) {
+          setVideo(data);
+        } else {
+          setNotFound(true);
+        }
+      } catch {
+        if (!cancelled) setNotFound(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
 
-    fetchVideo();
+    load();
+    return () => { cancelled = true; };
   }, [id, routeVideo]);
 
   if (loading) {
@@ -62,10 +79,22 @@ const VideoPlayer = () => {
     );
   }
 
-  if (!video) {
+  if (notFound || !video) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Video not found</p>
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center space-y-3">
+          <p className="text-muted-foreground">
+            {navigator.onLine
+              ? "Video not found"
+              : "Offline copy unavailable. Connect to the internet or download this video."}
+          </p>
+          <button
+            onClick={() => navigate("/")}
+            className="text-sm text-primary underline"
+          >
+            Back to library
+          </button>
+        </div>
       </div>
     );
   }

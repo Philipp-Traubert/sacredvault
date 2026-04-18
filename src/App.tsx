@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useAuth } from "@/hooks/useAuth";
-import { useAccessControl } from "@/hooks/useAccessControl";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { AccessProvider, useAccessControl } from "@/hooks/useAccessControl";
 import Login from "./pages/Login";
 import VideoLibrary from "./pages/VideoLibrary";
 import VideoPlayer from "./pages/VideoPlayer";
@@ -59,7 +59,11 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <AppRoutes />
+        <AuthProvider>
+          <AccessProvider>
+            <AppRoutes />
+          </AccessProvider>
+        </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
