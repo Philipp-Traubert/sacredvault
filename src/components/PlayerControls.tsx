@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import NeuButton from "./NeuButton";
 import AudioOutputSelector from "./AudioOutputSelector";
 import {
   Play,
@@ -10,7 +9,6 @@ import {
   Maximize,
   Minimize,
   Download,
-  Check,
   Loader2,
   ArrowLeft,
 } from "lucide-react";
@@ -41,8 +39,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [videoSrc, setVideoSrc] = useState<string>("");
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
   const objectUrlRef = useRef<string | null>(null);
-  const pendingResumeRef = useRef<{ time: number; autoplay: boolean } | null>(null);
-  const errorRetryRef = useRef(false); // prevent infinite error→retry loops
 
   const { downloadVideo, getOfflineVideoBlob, removeOfflineVideo, isVideoOffline, downloadProgress, downloading } =
     useOfflineVideo();
@@ -50,90 +46,46 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const isDownloading = downloading[video.id] || false;
   const progress = downloadProgress[video.id] || 0;
 
-  const setManagedVideoSrc = useCallback((nextSrc: string) => {
-    if (objectUrlRef.current && objectUrlRef.current !== nextSrc) {
+  // Single source rule: pick once on mount. Offline copy wins. No swapping.
+  const loadSource = useCallback(async () => {
+    // Clean up any prior blob URL
+    if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
 
-    if (nextSrc.startsWith("blob:")) {
-      objectUrlRef.current = nextSrc;
+    const blob = await getOfflineVideoBlob(video.id);
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      objectUrlRef.current = url;
+      setVideoSrc(url);
+      setOffline(true);
+      return;
     }
 
-    setVideoSrc(nextSrc);
-  }, []);
-
-  const loadOfflineSource = useCallback(
-    async (resumeTime = 0, autoplay = false) => {
-      const blob = await getOfflineVideoBlob(video.id);
-      if (!blob) return false;
-
-      pendingResumeRef.current = { time: resumeTime, autoplay };
-      setManagedVideoSrc(URL.createObjectURL(blob));
-      setOffline(true);
-      errorRetryRef.current = false; // reset on successful offline load
-      return true;
-    },
-    [getOfflineVideoBlob, setManagedVideoSrc, video.id]
-  );
+    setOffline(false);
+    setVideoSrc(video.video_url);
+  }, [getOfflineVideoBlob, video.id, video.video_url]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadVideo = async () => {
-      const isOff = await isVideoOffline(video.id);
-      setOffline(isOff);
-
-      if (isOff) {
-        const blob = await getOfflineVideoBlob(video.id);
-        if (blob && !cancelled) {
-          setManagedVideoSrc(URL.createObjectURL(blob));
-          return;
-        }
-      }
-
-      // Only use network URL if we're online
-      if (navigator.onLine && !cancelled) {
-        setManagedVideoSrc(video.video_url);
-      }
-    };
-
-    loadVideo();
+    loadSource();
     return () => {
-      cancelled = true;
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = null;
       }
     };
-  }, [getOfflineVideoBlob, isVideoOffline, setManagedVideoSrc, video.id, video.video_url]);
-
-  useEffect(() => {
-    const handleOffline = async () => {
-      if (objectUrlRef.current) return; // already using blob
-
-      const hasOfflineCopy = await isVideoOffline(video.id);
-      if (!hasOfflineCopy) return;
-
-      const currentVideo = videoRef.current;
-      await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
-    };
-
-    window.addEventListener("offline", handleOffline);
-    return () => window.removeEventListener("offline", handleOffline);
-  }, [isVideoOffline, loadOfflineSource, video.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.id]);
 
   const togglePlay = useCallback(() => {
-    const currentVideo = videoRef.current;
-    if (!currentVideo) return;
-
-    if (currentVideo.paused) {
-      void currentVideo.play().catch((error) => {
-        console.warn("Play failed:", error);
-      });
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      void v.play().catch((e) => console.warn("Play failed:", e));
     } else {
-      currentVideo.pause();
+      v.pause();
     }
   }, []);
 
@@ -183,18 +135,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     };
   }, []);
 
-  const handleVideoError = useCallback(async () => {
-    // Already using offline blob or already tried — don't loop
-    if (objectUrlRef.current || errorRetryRef.current) return;
-    errorRetryRef.current = true;
-
-    const hasOfflineCopy = await isVideoOffline(video.id);
-    if (!hasOfflineCopy) return;
-
-    const currentVideo = videoRef.current;
-    await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
-  }, [isVideoOffline, loadOfflineSource, video.id]);
-
   const toggleFullscreen = async () => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -242,7 +182,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     try {
       const proxyUrl = await getProxiedVideoUrl(video.video_url, true);
       const token = await getAuthToken();
-      const currentVideo = videoRef.current;
       await downloadVideo(video.id, proxyUrl, token || undefined, {
         id: video.id,
         title: video.title,
@@ -250,7 +189,8 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         video_url: video.video_url,
         duration: null,
       });
-      await loadOfflineSource(currentVideo?.currentTime || 0, !!currentVideo && !currentVideo.paused);
+      // Reload from offline blob now that it's saved
+      await loadSource();
     } catch (error) {
       console.error("Download failed:", error);
     }
@@ -258,11 +198,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   const handleRemoveOffline = async () => {
     await removeOfflineVideo(video.id);
-    setOffline(false);
-    errorRetryRef.current = false;
-    if (navigator.onLine) {
-      setManagedVideoSrc(video.video_url);
-    }
+    await loadSource();
   };
 
   const formatTime = (secs: number) => {
@@ -305,30 +241,8 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => {
-          const currentVideo = videoRef.current;
-          setDuration(currentVideo?.duration || 0);
-
-          const pendingResume = pendingResumeRef.current;
-          if (!currentVideo || !pendingResume) return;
-
-          const safeTime = Number.isFinite(currentVideo.duration)
-            ? Math.min(pendingResume.time, currentVideo.duration || pendingResume.time)
-            : pendingResume.time;
-
-          currentVideo.currentTime = safeTime;
-          setCurrentTime(safeTime);
-
-          if (pendingResume.autoplay) {
-            void currentVideo.play().catch((error) => {
-              console.warn("Resume play failed:", error);
-            });
-          }
-
-          pendingResumeRef.current = null;
-        }}
+        onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
         onEnded={() => setPlaying(false)}
-        onError={() => void handleVideoError()}
         playsInline
       />
 

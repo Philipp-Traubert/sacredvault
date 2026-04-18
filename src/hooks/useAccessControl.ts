@@ -36,11 +36,12 @@ export function useAccessControl() {
       return;
     }
 
-    // Use cached role immediately so offline works
+    // Cache hit → trust it immediately and never downgrade on network errors
     const cached = getCachedRole(user.id);
     if (cached) {
       setRole(cached);
       setHasAccess(true);
+      setLoading(false);
     }
 
     const fetchRole = async () => {
@@ -51,16 +52,23 @@ export function useAccessControl() {
           .eq("user_id", user.id)
           .maybeSingle();
 
-        if (!error && data) {
+        if (error) {
+          // Network/transient error — keep cached state if any, never demote
+          if (!cached) {
+            setRole(null);
+            setHasAccess(false);
+          }
+        } else if (data) {
           setRole(data.role as AppRole);
           setHasAccess(true);
           setCachedRole(user.id, data.role as AppRole);
-        } else if (!cached) {
+        } else {
+          // Explicit "no role" from server — only then revoke
           setRole(null);
           setHasAccess(false);
         }
       } catch {
-        // Network error — keep cached role if available
+        // Network error — keep cached role if available, never demote
         if (!cached) {
           setRole(null);
           setHasAccess(false);
@@ -69,8 +77,6 @@ export function useAccessControl() {
       setLoading(false);
     };
 
-    // If we have cache, stop loading immediately; still refresh in background
-    if (cached) setLoading(false);
     fetchRole();
   }, [user]);
 
