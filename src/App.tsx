@@ -15,11 +15,28 @@ import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
+function hasCachedSession(): boolean {
+  try {
+    return !!localStorage.getItem("video_vault_session_user");
+  } catch {
+    return false;
+  }
+}
+
 function AppRoutes() {
   const { user, loading: authLoading } = useAuth();
   const { hasAccess, loading: accessLoading } = useAccessControl();
 
   if (authLoading || accessLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  // Offline edge case: auth lib cleared session but we have cached user — keep loader.
+  if (!user && hasCachedSession() && !navigator.onLine) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />

@@ -15,6 +15,7 @@ import {
 import { Trash2 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
 import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
+import { getOfflineVideo } from "@/lib/opfs";
 
 interface PlayerControlsProps {
   video: {
@@ -47,7 +48,7 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const isDownloading = downloading[video.id] || false;
   const progress = downloadProgress[video.id] || 0;
 
-  // Single source rule: pick once on mount. Offline copy wins. No swapping.
+  // Single source rule: pick once per video.id. Offline blob wins, else direct URL.
   const loadSource = useCallback(async () => {
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
@@ -66,19 +67,14 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
     setOffline(false);
     if (!navigator.onLine) {
-      // No offline copy and no network — show clear error
       setVideoSrc("");
       setLoadError(true);
       return;
     }
 
-    // Online: route through proxy
-    try {
-      const proxied = await getProxiedVideoUrl(video.video_url, false);
-      setVideoSrc(proxied);
-    } catch {
-      setVideoSrc(video.video_url);
-    }
+    // Online: play directly from source URL. No proxy on playback path
+    // (proxy strips auth from <video> requests and SW intercepts caused reload loops).
+    setVideoSrc(video.video_url);
   }, [getOfflineVideoBlob, video.id, video.video_url]);
 
   useEffect(() => {
@@ -203,8 +199,16 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         video_url: video.video_url,
         duration: null,
       });
-      // Reload from offline blob now that it's saved
-      await loadSource();
+      // Swap to the freshly-saved offline blob without re-running full loadSource
+      const blob = await getOfflineVideo(video.id);
+      if (blob) {
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        objectUrlRef.current = url;
+        setVideoSrc(url);
+        setOffline(true);
+        setLoadError(false);
+      }
     } catch (error) {
       console.error("Download failed:", error);
     }
@@ -212,7 +216,18 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   const handleRemoveOffline = async () => {
     await removeOfflineVideo(video.id);
-    await loadSource();
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setOffline(false);
+    if (navigator.onLine) {
+      setVideoSrc(video.video_url);
+      setLoadError(false);
+    } else {
+      setVideoSrc("");
+      setLoadError(true);
+    }
   };
 
   const formatTime = (secs: number) => {
@@ -265,8 +280,9 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
           onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
           onEnded={() => setPlaying(false)}
           onError={() => {
-            // If the video element fails (e.g. lost network mid-play with no offline copy)
-            if (!offline) setLoadError(true);
+            // Surface real errors instead of retrying into a loop
+            console.warn("Video element error", videoRef.current?.error);
+            setLoadError(true);
           }}
           playsInline
         />
