@@ -1,71 +1,85 @@
 
-Root cause looks like a combination of two problems in the current code:
 
-1. Offline access is not truly centralized:
-- `App.tsx` calls `useAuth()` and `useAccessControl()`
-- `useAccessControl()` calls `useAuth()` again internally
-- `VideoLibrary` also calls both hooks again
-This creates multiple independent auth/access states. On mobile reload in airplane mode, one instance can resolve to “no access” before another restores the cached session, which matches the jump to the Access Pending screen.
+## Real root causes (this time, for sure)
 
-2. The offline download can still be “marked offline” without guaranteeing a playable video blob:
-- `useOfflineVideo.ts` accepts almost any non-tiny blob
-- the download path can still save a bad response/body and metadata
-- then `VideoPlayer.tsx` finds metadata, but `PlayerControls.tsx` may not get a valid playable blob, causing the loading spinner / failure path
+I went through every file again and I think I finally see what's happening. There are **three separate bugs** still alive — none of our previous fixes attacked them directly:
 
-Plan to fix it in the simplest possible way:
+### Bug 1: VitePWA service worker is hijacking the proxied video stream on mobile
 
-1. Unify auth/access state
-- Create a single shared auth/access provider or app-level context.
-- `useAccessControl` should consume the existing authenticated user/session instead of calling `useAuth()` internally.
-- `AppRoutes` should wait for one authoritative auth+access result before routing.
-- If offline and a cached approved role exists, keep access granted and never downgrade to Access Pending unless the server later explicitly confirms no role.
+`vite.config.ts` registers `VitePWA({ registerType: "autoUpdate" })`. On the published `.lovable.app` site (not the preview iframe), this **installs a service worker that uses Workbox's default network-first navigation handler**. As soon as you save a video offline:
+- the player calls `getProxiedVideoUrl(...)` → returns a Supabase edge function URL
+- the `<video>` requests bytes from that URL
+- on mobile Chrome/Brave/Safari, the service worker intercepts the request, the response stream gets aborted partway, the `<video>` element fires `error`, **and `registerType: "autoUpdate"` then triggers a `skipWaiting`+`clients.claim` cycle that *reloads the page*** — which is exactly the "constant refresh" you keep seeing.
+- This only happens after a video is downloaded because that's when the `<video>` element first encounters a long-lived range request through the SW.
 
-2. Make offline playback depend on actual blob existence, not just metadata
-- Tighten the offline storage API so the app only treats a video as offline if the actual blob exists and is readable.
-- In `VideoPlayer`, prefer local metadata only when a real offline blob is present.
-- If offline and metadata exists but blob is missing/corrupt, show a clear “offline copy unavailable” state instead of “Video not found”.
+`main.tsx` only unregisters the SW inside the preview iframe — on your real phone (the published URL) the SW is fully active.
 
-3. Harden the downloader
-- In `useOfflineVideo.ts`, validate the response before saving:
-  - reject HTML/text/error payloads
-  - verify blob type and minimum viability more strictly
-  - only save metadata after the blob is successfully stored
-- If a download fails, remove any partial/corrupt offline entry completely.
+**Fix:** Stop registering a service worker entirely. We don't need it: offline videos live in IndexedDB, the dashboard cache lives in localStorage. The SW only adds risk. We'll remove `VitePWA` from `vite.config.ts` and have `main.tsx` always unregister any leftover SW + clear caches on first load.
 
-4. Simplify the player further
-- Keep the “single source per mount” rule in `PlayerControls.tsx`.
-- On mount:
-  - if a verified offline blob exists, use blob URL
-  - otherwise use network URL
-- Add a small load/error state so failed blob playback does not silently spin forever.
+### Bug 2: Loading the video through the edge-function proxy on mobile keeps timing out / 401-ing
 
-5. Make library-to-player offline navigation deterministic
-- In `VideoLibrary`, when a card is marked offline, route to the player with enough local data to open immediately.
-- In `VideoPlayer`, if offline, skip the backend fetch entirely once a verified offline entry is found.
-- This removes the current mixed path where the page partly depends on backend availability during offline playback.
+`getProxiedVideoUrl` returns a URL like `https://<project>.supabase.co/functions/v1/video-proxy?url=...`. The `<video>` element fetches it **without** an `Authorization` header (you can't add headers to a `<video src>` request). The edge function checks `req.headers.get("authorization")` → returns `401 Unauthorized` → `onError` fires.
+- For initial play this still "kind of works" because some browsers retry, but on mobile it just dies.
+- We're paying the cost of the proxy (which only exists for CORS) for direct-MP4 URLs that don't actually need it.
 
-6. Files to update
-- `src/App.tsx`
-- `src/hooks/useAuth.ts`
-- `src/hooks/useAccessControl.ts`
-- `src/hooks/useOfflineVideo.ts`
-- `src/lib/opfs.ts`
-- `src/pages/VideoLibrary.tsx`
-- `src/pages/VideoPlayer.tsx`
-- `src/components/PlayerControls.tsx`
+**Fix:** For playback (not download), point `<video src>` straight at `video.video_url`. The proxy stays only for the download path, where we *can* attach the bearer token via `fetch`. If a particular host has CORS issues for streaming, we'll fall back to the proxy with the access token in the query string and have the edge function accept either header *or* `?token=` param.
 
-7. Verification after implementation
-- Download a video on mobile
-- Wait for completion
-- Enable airplane mode
-- Open the video from the overview without reloading
-- Reload the app still in airplane mode
-- Confirm:
-  - dashboard still opens
-  - no Access Pending redirect
-  - offline video opens and plays
-  - no reload loop
-  - removing offline copy restores normal online-only behavior
+### Bug 3: The downloaded file is being saved before we know it's a real video
 
-Technical note:
-The biggest architectural fix is removing duplicated hook instances and replacing “offline by metadata” with “offline only if verified blob exists”. That should address both symptoms you reported from the same root cause.
+The current downloader rejects HTML/JSON content types and tiny blobs, but if the upstream sends `application/octet-stream` for an HLS playlist or a partial response, we still save it. Then `<video>` can't decode it → error → reload (Bug 1) again. Plus, on mobile, the m3u8→MP4 path in `video-proxy` sometimes returns the playlist itself, not the MP4.
+
+**Fix:** Before writing anything, do a `video.canPlayType()` check on the blob via a hidden `<video>` element. If the browser can't even read metadata, throw and clean up.
+
+### Bug 4 (smaller): Player effects re-run and re-create the blob URL
+
+`PlayerControls` recreates the `objectURL` whenever `loadSource` runs (mount, after download, after remove). Combined with Bug 1 this contributes to the reload loop. We'll only call `loadSource` exactly once per `video.id`, and after a download we'll just set the existing blob URL without going through the whole flow again.
+
+---
+
+## The plan
+
+### A. Kill the service worker
+- Remove `VitePWA` from `vite.config.ts` entirely.
+- In `main.tsx`, always unregister all service workers and `caches.keys().then(k => k.forEach(c => caches.delete(c)))` on every load. This cleans up the SW that's already installed on users' phones from previous visits.
+
+### B. Stop proxying playback
+- `PlayerControls.loadSource`: if a verified offline blob exists → blob URL; else → `video.video_url` directly. No proxy call for playback.
+- Keep the proxy only for `downloadVideo` (where we send the auth header via `fetch`).
+
+### C. Bulletproof the downloader
+- Keep current content-type and size checks.
+- Add a final "can the browser actually decode the first frame" check: create a hidden `<video>`, set `src = URL.createObjectURL(blob)`, wait for `loadedmetadata` or fail within 5s. If fail → throw, clean up, surface error to the user.
+- Only after this check, write blob + meta to IndexedDB.
+
+### D. Lock the player to one source per mount
+- `useEffect([video.id])` runs `loadSource` exactly once.
+- After a successful download, instead of re-running `loadSource`, directly `URL.createObjectURL(savedBlob)` and `setVideoSrc(...)` once. Track the previous object URL in `objectUrlRef` and revoke it.
+- Remove the `onError → setLoadError` retry since with the SW gone and direct URLs, errors should be real and surfaced (not retried into a loop).
+
+### E. Auth/access — one tiny additional safety
+- `useAccessControl` is already correct (cached role wins, never demote on network error). Leaving it. Only addition: when `authLoading` is `false` and `user` is `null` *but* a cached user exists (edge case if Supabase auth lib clears the cached session offline), keep showing the loader for one more tick instead of bouncing to Login. This stops the "Access Pending"/"Login" flash on airplane-mode reloads.
+
+### F. Verification you can do on your phone
+1. Hard-reload the site once with internet to flush the old SW.
+2. Open DevTools (or just trust it) — confirm there's no SW registered.
+3. Save a video offline → click play with internet → no reloads, video plays from blob.
+4. Airplane mode → reload → dashboard shows, no Access Pending screen.
+5. Click the offline video → plays from blob.
+6. Remove offline → still in airplane mode → click → see clean "offline copy unavailable" message, not a reload loop.
+
+### Files I'll touch
+- `vite.config.ts` — drop VitePWA
+- `src/main.tsx` — unconditionally unregister SW + clear caches
+- `src/components/PlayerControls.tsx` — direct URL playback, single load, no error retry
+- `src/lib/opfs.ts` — unchanged structure, add blob playability check helper
+- `src/hooks/useOfflineVideo.ts` — call the playability check before saving
+- `src/App.tsx` / `src/hooks/useAccessControl.ts` — small "don't bounce on offline auth flicker" guard
+
+### What I'm explicitly NOT doing
+- Not reintroducing encryption.
+- Not adding a fancy fullscreen library.
+- Not touching the library page caching (it's working).
+- Not touching the edge function for now (it stays usable for downloads).
+
+If anything in this plan is unclear, say so before I start; otherwise approve and I'll implement exactly this.
+
