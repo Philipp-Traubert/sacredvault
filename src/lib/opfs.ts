@@ -27,11 +27,44 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+/**
+ * Verify a blob is actually a playable video by loading metadata in a hidden <video>.
+ * Resolves true on loadedmetadata, false on error or timeout.
+ */
+export function isBlobPlayableVideo(blob: Blob, timeoutMs = 8000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    let done = false;
+    const cleanup = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      video.removeAttribute("src");
+      try { video.load(); } catch { /* ignore */ }
+      URL.revokeObjectURL(url);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => cleanup(false), timeoutMs);
+    video.onloadedmetadata = () => { clearTimeout(timer); cleanup(true); };
+    video.onerror = () => { clearTimeout(timer); cleanup(false); };
+    video.src = url;
+  });
+}
+
 export async function saveOfflineVideo(
   id: string,
   meta: OfflineVideoMeta,
   blob: Blob
 ): Promise<void> {
+  // Step 0: verify the blob is actually a decodable video BEFORE writing anything
+  const playable = await isBlobPlayableVideo(blob);
+  if (!playable) {
+    throw new Error("Downloaded file is not a playable video");
+  }
+
   const db = await openDB();
   // Step 1: write blob first
   const tx1 = db.transaction(VIDEO_STORE, "readwrite");
@@ -42,10 +75,9 @@ export async function saveOfflineVideo(
     tx1.onabort = () => reject(tx1.error);
   });
 
-  // Step 2: verify blob is readable
+  // Step 2: verify blob is readable from storage
   const verified = await getOfflineVideo(id);
   if (!verified || verified.size < 10000) {
-    // Clean up bad blob
     await deleteOfflineVideo(id);
     throw new Error("Failed to verify saved video blob");
   }
