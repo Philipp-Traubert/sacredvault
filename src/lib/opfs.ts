@@ -27,44 +27,14 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-/**
- * Verify a blob is actually a playable video by loading metadata in a hidden <video>.
- * Resolves true on loadedmetadata, false on error or timeout.
- */
-export function isBlobPlayableVideo(blob: Blob, timeoutMs = 8000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(blob);
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    video.playsInline = true;
-    let done = false;
-    const cleanup = (ok: boolean) => {
-      if (done) return;
-      done = true;
-      video.removeAttribute("src");
-      try { video.load(); } catch { /* ignore */ }
-      URL.revokeObjectURL(url);
-      resolve(ok);
-    };
-    const timer = setTimeout(() => cleanup(false), timeoutMs);
-    video.onloadedmetadata = () => { clearTimeout(timer); cleanup(true); };
-    video.onerror = () => { clearTimeout(timer); cleanup(false); };
-    video.src = url;
-  });
-}
-
 export async function saveOfflineVideo(
   id: string,
   meta: OfflineVideoMeta,
   blob: Blob
 ): Promise<void> {
-  // Step 0: verify the blob is actually a decodable video BEFORE writing anything
-  const playable = await isBlobPlayableVideo(blob);
-  if (!playable) {
-    throw new Error("Downloaded file is not a playable video");
-  }
-
+  // No pre-playability check: creating a second <video> for hundreds of MB
+  // crashes mobile tabs. Trust the downloader's content-type + size checks,
+  // and let the real <video> element surface playback errors later.
   const db = await openDB();
   // Step 1: write blob first
   const tx1 = db.transaction(VIDEO_STORE, "readwrite");
