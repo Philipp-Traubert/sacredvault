@@ -43,13 +43,26 @@ async function openVideoCache(): Promise<Cache> {
   return caches.open(CACHE_NAME);
 }
 
+async function getOfflineVideoResponse(id: string): Promise<Response | null> {
+  const cache = await openVideoCache();
+  return (await cache.match(getOfflineVideoRequestUrl(id))) ?? null;
+}
+
+async function getStoredVideoSize(id: string): Promise<number> {
+  const response = await getOfflineVideoResponse(id);
+  if (!response) return 0;
+
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > 0) return contentLength;
+
+  return (await response.blob()).size;
+}
+
 export async function saveOfflineVideo(
   id: string,
   meta: OfflineVideoMeta,
   blob: Blob
 ): Promise<void> {
-  const cache = await openVideoCache();
-  const requestUrl = getOfflineVideoRequestUrl(id);
   const headers = new Headers({
     "Content-Type": blob.type || "video/mp4",
     "Content-Length": String(blob.size),
@@ -57,14 +70,36 @@ export async function saveOfflineVideo(
     "Cache-Control": "no-store",
   });
 
-  await cache.put(requestUrl, new Response(blob, { headers }));
+  await saveOfflineVideoResponse(id, meta, new Response(blob, { headers }));
+}
+
+export async function saveOfflineVideoResponse(
+  id: string,
+  meta: OfflineVideoMeta,
+  response: Response
+): Promise<void> {
+  const cache = await openVideoCache();
+  const requestUrl = getOfflineVideoRequestUrl(id);
+  const headers = new Headers(response.headers);
+  if (!headers.get("content-type")) headers.set("Content-Type", "video/mp4");
+  if (!headers.get("accept-ranges")) headers.set("Accept-Ranges", "bytes");
+  if (!headers.get("cache-control")) headers.set("Cache-Control", "no-store");
+
+  await cache.put(
+    requestUrl,
+    new Response(response.body, {
+      status: response.status || 200,
+      statusText: response.statusText,
+      headers,
+    })
+  );
 
   if ("serviceWorker" in navigator) {
     await navigator.serviceWorker.ready.catch(() => undefined);
   }
 
-  const verified = await getOfflineVideo(id);
-  if (!verified || verified.size < 10000) {
+  const verifiedSize = await getStoredVideoSize(id);
+  if (verifiedSize < 10000) {
     await deleteOfflineVideo(id);
     throw new Error("Failed to verify saved video blob");
   }
@@ -82,8 +117,7 @@ export async function saveOfflineVideo(
 
 export async function getOfflineVideo(id: string): Promise<Blob | null> {
   try {
-    const cache = await openVideoCache();
-    const response = await cache.match(getOfflineVideoRequestUrl(id));
+    const response = await getOfflineVideoResponse(id);
     if (!response) return null;
 
     const blob = await response.blob();
@@ -120,9 +154,7 @@ export async function deleteOfflineVideo(id: string): Promise<void> {
  */
 export async function isVideoOffline(id: string): Promise<boolean> {
   try {
-    const cache = await openVideoCache();
-    const response = await cache.match(getOfflineVideoRequestUrl(id));
-    return !!response;
+    return (await getStoredVideoSize(id)) >= 10000;
   } catch {
     return false;
   }

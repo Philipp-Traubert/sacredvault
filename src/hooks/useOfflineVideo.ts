@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import {
   type OfflineVideoMeta,
   saveOfflineVideo,
+  saveOfflineVideoResponse,
   getOfflineVideo,
   deleteOfflineVideo,
   isVideoOffline as checkOffline,
@@ -40,37 +41,6 @@ export function useOfflineVideo() {
         }
 
         const totalBytes = Number(response.headers.get("content-length") || 0);
-
-        let blob: Blob;
-        if (response.body && totalBytes > 0) {
-          const reader = response.body.getReader();
-          const chunks: Uint8Array[] = [];
-          let received = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            setDownloadProgress((p) => ({
-              ...p,
-              [videoId]: Math.round((received / totalBytes) * 100),
-            }));
-          }
-          blob = new Blob(chunks as BlobPart[], { type: contentType || "video/mp4" });
-        } else {
-          blob = await response.blob();
-        }
-
-        // Strict size check — anything under 100KB is almost certainly an error page
-        if (blob.size < 100_000) {
-          throw new Error(`Downloaded blob too small (${blob.size} bytes)`);
-        }
-
-        // If the blob has a known type, it must be a video
-        if (blob.type && !blob.type.startsWith("video/") && !blob.type.includes("octet-stream")) {
-          throw new Error(`Downloaded blob is not a video (type: ${blob.type})`);
-        }
-
         const meta: OfflineVideoMeta = videoMeta ?? {
           id: videoId,
           title: "",
@@ -79,8 +49,56 @@ export function useOfflineVideo() {
           duration: null,
         };
 
-        // saveOfflineVideo verifies the blob is readable before writing metadata
-        await saveOfflineVideo(videoId, meta, blob);
+        if (response.body) {
+          const [storageStream, progressStream] = response.body.tee();
+          const storageHeaders = new Headers(response.headers);
+          if (!storageHeaders.get("content-type")) {
+            storageHeaders.set("Content-Type", contentType || "video/mp4");
+          }
+
+          const savePromise = saveOfflineVideoResponse(
+            videoId,
+            meta,
+            new Response(storageStream, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: storageHeaders,
+            })
+          );
+
+          const reader = progressStream.getReader();
+          let received = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.length;
+            if (totalBytes > 0) {
+              setDownloadProgress((p) => ({
+                ...p,
+                [videoId]: Math.round((received / totalBytes) * 100),
+              }));
+            }
+          }
+          if (received < 100_000) {
+            await deleteOfflineVideo(videoId);
+            throw new Error(`Downloaded stream too small (${received} bytes)`);
+          }
+
+          await savePromise;
+        } else {
+          const blob = await response.blob();
+
+          if (blob.size < 100_000) {
+            throw new Error(`Downloaded blob too small (${blob.size} bytes)`);
+          }
+
+          if (blob.type && !blob.type.startsWith("video/") && !blob.type.includes("octet-stream")) {
+            throw new Error(`Downloaded blob is not a video (type: ${blob.type})`);
+          }
+
+          await saveOfflineVideo(videoId, meta, blob);
+        }
+
         setDownloadProgress((p) => ({ ...p, [videoId]: 100 }));
       } catch (error) {
         console.error("Download failed:", error);
