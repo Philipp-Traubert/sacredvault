@@ -15,7 +15,7 @@ import {
 import { Trash2 } from "lucide-react";
 import { useOfflineVideo } from "@/hooks/useOfflineVideo";
 import { getProxiedVideoUrl, getAuthToken } from "@/lib/videoProxy";
-import { getOfflineVideo } from "@/lib/opfs";
+import { getOfflineVideoPlaybackUrl, isVideoOffline } from "@/lib/opfs";
 
 interface PlayerControlsProps {
   video: {
@@ -41,7 +41,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [loadError, setLoadError] = useState(false);
   const hasLoadedDataRef = useRef(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
-  const objectUrlRef = useRef<string | null>(null);
 
   const { downloadVideo, removeOfflineVideo, downloadProgress, downloading } =
     useOfflineVideo();
@@ -57,13 +56,11 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     setLoadError(false);
 
     (async () => {
-      const blob = await getOfflineVideo(video.id);
+      const offlineAvailable = await isVideoOffline(video.id);
       if (cancelled) return;
 
-      if (blob) {
-        const url = URL.createObjectURL(blob);
-        objectUrlRef.current = url;
-        setVideoSrc(url);
+      if (offlineAvailable) {
+        setVideoSrc(getOfflineVideoPlaybackUrl(video.id));
         setOffline(true);
         return;
       }
@@ -80,10 +77,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
     return () => {
       cancelled = true;
       if (hideTimer.current) clearTimeout(hideTimer.current);
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video.id]);
@@ -198,13 +191,9 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
         video_url: video.video_url,
         duration: null,
       });
-      // Swap to the freshly-saved offline blob without re-running full loadSource
-      const blob = await getOfflineVideo(video.id);
-      if (blob) {
-        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        objectUrlRef.current = url;
-        setVideoSrc(url);
+      const offlineAvailable = await isVideoOffline(video.id);
+      if (offlineAvailable) {
+        setVideoSrc(getOfflineVideoPlaybackUrl(video.id));
         setOffline(true);
         setLoadError(false);
       }
@@ -215,10 +204,6 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
 
   const handleRemoveOffline = async () => {
     await removeOfflineVideo(video.id);
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
     setOffline(false);
     if (navigator.onLine) {
       setVideoSrc(video.video_url);
