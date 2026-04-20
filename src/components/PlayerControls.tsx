@@ -1,6 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _useCallback = useCallback;
 import { motion } from "framer-motion";
 import AudioOutputSelector from "./AudioOutputSelector";
 import {
