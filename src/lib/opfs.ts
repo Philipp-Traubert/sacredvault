@@ -70,6 +70,7 @@ export async function saveOfflineVideo(
   }
 
   // Step 3: only now write metadata
+  const db = await openDB();
   const tx2 = db.transaction(META_STORE, "readwrite");
   tx2.objectStore(META_STORE).put(meta, id);
   await new Promise<void>((resolve, reject) => {
