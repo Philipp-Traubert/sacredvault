@@ -277,11 +277,16 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
           onPause={() => setPlaying(false)}
           onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
           onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+          onLoadedData={() => { hasLoadedDataRef.current = true; }}
           onEnded={() => setPlaying(false)}
           onError={() => {
-            // Surface real errors instead of retrying into a loop
-            console.warn("Video element error", videoRef.current?.error);
-            setLoadError(true);
+            const err = videoRef.current?.error;
+            console.warn("Video element error", err);
+            // Only fatal if we never got the first frame. Transient errors
+            // after playback started are ignored to avoid reload-loop UI on mobile.
+            if (!hasLoadedDataRef.current) {
+              setLoadError(true);
+            }
           }}
           playsInline
         />
