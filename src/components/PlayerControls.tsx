@@ -39,47 +39,46 @@ const PlayerControls = ({ video, onBack }: PlayerControlsProps) => {
   const [offline, setOffline] = useState(false);
   const [videoSrc, setVideoSrc] = useState<string>("");
   const [loadError, setLoadError] = useState(false);
+  const hasLoadedDataRef = useRef(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
   const objectUrlRef = useRef<string | null>(null);
 
-  const { downloadVideo, getOfflineVideoBlob, removeOfflineVideo, isVideoOffline, downloadProgress, downloading } =
+  const { downloadVideo, removeOfflineVideo, downloadProgress, downloading } =
     useOfflineVideo();
 
   const isDownloading = downloading[video.id] || false;
   const progress = downloadProgress[video.id] || 0;
 
-  // Single source rule: pick once per video.id. Offline blob wins, else direct URL.
-  const loadSource = useCallback(async () => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
+  // Single-mount source load. Runs exactly once per video.id.
+  // Offline blob always wins ("Always use offline" once downloaded).
+  useEffect(() => {
+    let cancelled = false;
+    hasLoadedDataRef.current = false;
     setLoadError(false);
 
-    const blob = await getOfflineVideoBlob(video.id);
-    if (blob) {
-      const url = URL.createObjectURL(blob);
-      objectUrlRef.current = url;
-      setVideoSrc(url);
-      setOffline(true);
-      return;
-    }
+    (async () => {
+      const blob = await getOfflineVideo(video.id);
+      if (cancelled) return;
 
-    setOffline(false);
-    if (!navigator.onLine) {
-      setVideoSrc("");
-      setLoadError(true);
-      return;
-    }
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        objectUrlRef.current = url;
+        setVideoSrc(url);
+        setOffline(true);
+        return;
+      }
 
-    // Online: play directly from source URL. No proxy on playback path
-    // (proxy strips auth from <video> requests and SW intercepts caused reload loops).
-    setVideoSrc(video.video_url);
-  }, [getOfflineVideoBlob, video.id, video.video_url]);
+      setOffline(false);
+      if (!navigator.onLine) {
+        setVideoSrc("");
+        setLoadError(true);
+        return;
+      }
+      setVideoSrc(video.video_url);
+    })();
 
-  useEffect(() => {
-    loadSource();
     return () => {
+      cancelled = true;
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
