@@ -166,6 +166,11 @@ export async function getOfflineVideo(id: string): Promise<Blob | null> {
 }
 
 export async function deleteOfflineVideo(id: string): Promise<void> {
+  if (isNative) {
+    nativeUriCache.delete(id);
+    await nativeDeleteVideo(id);
+    return;
+  }
   try {
     const cache = await openVideoCache();
     await cache.delete(getOfflineVideoRequestUrl(id));
@@ -183,10 +188,18 @@ export async function deleteOfflineVideo(id: string): Promise<void> {
 }
 
 /**
- * A video is "offline" only if a real, readable blob exists.
+ * A video is "offline" only if a real, readable file exists.
  * Metadata alone is not enough.
  */
 export async function isVideoOffline(id: string): Promise<boolean> {
+  if (isNative) {
+    const ok = await nativeIsVideoOffline(id);
+    if (ok && !nativeUriCache.has(id)) {
+      const src = await nativeGetVideoSrc(id);
+      if (src) nativeUriCache.set(id, src);
+    }
+    return ok;
+  }
   try {
     return (await getStoredVideoSize(id)) >= 10000;
   } catch {
@@ -195,6 +208,9 @@ export async function isVideoOffline(id: string): Promise<boolean> {
 }
 
 export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta | null> {
+  if (isNative) {
+    return nativeReadMeta(id);
+  }
   // Only return meta if blob also exists — keep them coupled
   const offline = await isVideoOffline(id);
   if (!offline) return null;
@@ -213,6 +229,9 @@ export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta
 }
 
 export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
+  if (isNative) {
+    return nativeListMetas();
+  }
   try {
     const db = await openDB();
     // Get all metas, then filter to only those with a real blob
@@ -232,3 +251,4 @@ export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
     return [];
   }
 }
+
