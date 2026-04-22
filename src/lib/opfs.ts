@@ -1,5 +1,16 @@
-// Simple offline video storage: one Blob per video in IndexedDB.
-// Metadata is only stored after the blob is verified saved.
+// Offline video storage facade.
+// On native (Capacitor) → uses the device filesystem (no JS memory pressure).
+// On web → uses Cache API + IndexedDB metadata (existing behavior).
+
+import { isNative } from "./platform";
+import {
+  nativeDeleteVideo,
+  nativeDownloadVideo,
+  nativeGetVideoSrc,
+  nativeIsVideoOffline,
+  nativeListMetas,
+  nativeReadMeta,
+} from "./nativeVideoStorage";
 
 const DB_NAME = "video_vault_offline";
 const DB_VERSION = 1;
@@ -13,6 +24,26 @@ export interface OfflineVideoMeta {
   thumbnail_url: string | null;
   video_url: string;
   duration: string | null;
+}
+
+// Cache last-resolved native URIs so the synchronous getOfflineVideoPlaybackUrl
+// can return them. Populated by isVideoOffline / saveOfflineVideo on native.
+const nativeUriCache = new Map<string, string>();
+
+/**
+ * Native-only: download a video straight to the device filesystem.
+ * Used by useOfflineVideo when running inside the Capacitor shell.
+ */
+export async function nativeDownloadAndStore(
+  id: string,
+  url: string,
+  meta: OfflineVideoMeta,
+  authToken?: string,
+  onProgress?: (percent: number) => void
+): Promise<void> {
+  await nativeDownloadVideo(id, url, meta, authToken, onProgress);
+  const src = await nativeGetVideoSrc(id);
+  if (src) nativeUriCache.set(id, src);
 }
 
 function openDB(): Promise<IDBDatabase> {
