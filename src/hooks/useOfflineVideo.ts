@@ -6,7 +6,9 @@ import {
   getOfflineVideo,
   deleteOfflineVideo,
   isVideoOffline as checkOffline,
+  nativeDownloadAndStore,
 } from "@/lib/opfs";
+import { isNative } from "@/lib/platform";
 
 export function useOfflineVideo() {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
