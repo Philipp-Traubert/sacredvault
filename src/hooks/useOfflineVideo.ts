@@ -6,7 +6,9 @@ import {
   getOfflineVideo,
   deleteOfflineVideo,
   isVideoOffline as checkOffline,
+  nativeDownloadAndStore,
 } from "@/lib/opfs";
+import { isNative } from "@/lib/platform";
 
 export function useOfflineVideo() {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
@@ -23,6 +25,23 @@ export function useOfflineVideo() {
       setDownloadProgress((p) => ({ ...p, [videoId]: 0 }));
 
       try {
+        // Native (Capacitor) path: stream straight to disk via native HTTP.
+        // No JS Blob, no Cache API — avoids the mobile browser crashes.
+        if (isNative) {
+          const meta: OfflineVideoMeta = videoMeta ?? {
+            id: videoId,
+            title: "",
+            thumbnail_url: null,
+            video_url: videoUrl,
+            duration: null,
+          };
+          await nativeDownloadAndStore(videoId, videoUrl, meta, authToken, (pct) => {
+            setDownloadProgress((p) => ({ ...p, [videoId]: pct }));
+          });
+          setDownloadProgress((p) => ({ ...p, [videoId]: 100 }));
+          return;
+        }
+
         const headers: Record<string, string> = {};
         if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 

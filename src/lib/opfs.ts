@@ -1,5 +1,16 @@
-// Simple offline video storage: one Blob per video in IndexedDB.
-// Metadata is only stored after the blob is verified saved.
+// Offline video storage facade.
+// On native (Capacitor) → uses the device filesystem (no JS memory pressure).
+// On web → uses Cache API + IndexedDB metadata (existing behavior).
+
+import { isNative } from "./platform";
+import {
+  nativeDeleteVideo,
+  nativeDownloadVideo,
+  nativeGetVideoSrc,
+  nativeIsVideoOffline,
+  nativeListMetas,
+  nativeReadMeta,
+} from "./nativeVideoStorage";
 
 const DB_NAME = "video_vault_offline";
 const DB_VERSION = 1;
@@ -13,6 +24,26 @@ export interface OfflineVideoMeta {
   thumbnail_url: string | null;
   video_url: string;
   duration: string | null;
+}
+
+// Cache last-resolved native URIs so the synchronous getOfflineVideoPlaybackUrl
+// can return them. Populated by isVideoOffline / saveOfflineVideo on native.
+const nativeUriCache = new Map<string, string>();
+
+/**
+ * Native-only: download a video straight to the device filesystem.
+ * Used by useOfflineVideo when running inside the Capacitor shell.
+ */
+export async function nativeDownloadAndStore(
+  id: string,
+  url: string,
+  meta: OfflineVideoMeta,
+  authToken?: string,
+  onProgress?: (percent: number) => void
+): Promise<void> {
+  await nativeDownloadVideo(id, url, meta, authToken, onProgress);
+  const src = await nativeGetVideoSrc(id);
+  if (src) nativeUriCache.set(id, src);
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -32,6 +63,9 @@ function getOfflineVideoRequestUrl(id: string): string {
 }
 
 export function getOfflineVideoPlaybackUrl(id: string): string {
+  if (isNative) {
+    return nativeUriCache.get(id) ?? `${OFFLINE_VIDEO_PATH}${encodeURIComponent(id)}`;
+  }
   return `${OFFLINE_VIDEO_PATH}${encodeURIComponent(id)}`;
 }
 
@@ -132,6 +166,11 @@ export async function getOfflineVideo(id: string): Promise<Blob | null> {
 }
 
 export async function deleteOfflineVideo(id: string): Promise<void> {
+  if (isNative) {
+    nativeUriCache.delete(id);
+    await nativeDeleteVideo(id);
+    return;
+  }
   try {
     const cache = await openVideoCache();
     await cache.delete(getOfflineVideoRequestUrl(id));
@@ -149,10 +188,18 @@ export async function deleteOfflineVideo(id: string): Promise<void> {
 }
 
 /**
- * A video is "offline" only if a real, readable blob exists.
+ * A video is "offline" only if a real, readable file exists.
  * Metadata alone is not enough.
  */
 export async function isVideoOffline(id: string): Promise<boolean> {
+  if (isNative) {
+    const ok = await nativeIsVideoOffline(id);
+    if (ok && !nativeUriCache.has(id)) {
+      const src = await nativeGetVideoSrc(id);
+      if (src) nativeUriCache.set(id, src);
+    }
+    return ok;
+  }
   try {
     return (await getStoredVideoSize(id)) >= 10000;
   } catch {
@@ -161,6 +208,9 @@ export async function isVideoOffline(id: string): Promise<boolean> {
 }
 
 export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta | null> {
+  if (isNative) {
+    return nativeReadMeta(id);
+  }
   // Only return meta if blob also exists — keep them coupled
   const offline = await isVideoOffline(id);
   if (!offline) return null;
@@ -179,6 +229,9 @@ export async function readOfflineVideoMeta(id: string): Promise<OfflineVideoMeta
 }
 
 export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
+  if (isNative) {
+    return nativeListMetas();
+  }
   try {
     const db = await openDB();
     // Get all metas, then filter to only those with a real blob
@@ -198,3 +251,4 @@ export async function getAllOfflineVideoMetas(): Promise<OfflineVideoMeta[]> {
     return [];
   }
 }
+
