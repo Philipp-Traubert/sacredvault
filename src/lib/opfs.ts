@@ -63,6 +63,9 @@ function getOfflineVideoRequestUrl(id: string): string {
 }
 
 export function getOfflineVideoPlaybackUrl(id: string): string {
+  if (isNative) {
+    return nativeUriCache.get(id) ?? `${OFFLINE_VIDEO_PATH}${encodeURIComponent(id)}`;
+  }
   return `${OFFLINE_VIDEO_PATH}${encodeURIComponent(id)}`;
 }
 
