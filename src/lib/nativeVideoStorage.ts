@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Native (Capacitor) offline video storage.
 // Downloads stream straight to the device filesystem via the native HTTP
 // client — no JS Blob in memory — and play through the native video element
@@ -5,9 +6,13 @@
 
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { toWebViewUri } from "./platform";
-
-const VIDEO_DIR = "videos";
-const META_DIR = "video-meta";
+import {
+  assertLooksLikeVideoDownload,
+  metaFilename,
+  validateVideoSourceUrl,
+  videoFilename,
+  videoStoragePolicy,
+} from "./videoStoragePolicy";
 
 export interface OfflineVideoMeta {
   id: string;
@@ -17,17 +22,8 @@ export interface OfflineVideoMeta {
   duration: string | null;
 }
 
-function videoFilename(id: string) {
-  // Keep the extension generic; the native player content-sniffs.
-  return `${VIDEO_DIR}/${encodeURIComponent(id)}.mp4`;
-}
-
-function metaFilename(id: string) {
-  return `${META_DIR}/${encodeURIComponent(id)}.json`;
-}
-
 async function ensureDirs() {
-  for (const path of [VIDEO_DIR, META_DIR]) {
+  for (const path of [videoStoragePolicy.videoDir, videoStoragePolicy.metaDir]) {
     try {
       await Filesystem.mkdir({
         path,
@@ -37,6 +33,20 @@ async function ensureDirs() {
     } catch {
       // already exists
     }
+  }
+
+  // Belt-and-suspenders media scanner hint. Directory.Data is already
+  // app-private on Android, but this prevents accidental gallery indexing if
+  // a future implementation moves files to shared/external app storage.
+  try {
+    await Filesystem.writeFile({
+      path: videoStoragePolicy.noMediaFile,
+      directory: Directory.Data,
+      data: "Sacred Video Vault private media directory",
+      encoding: "utf8" as any,
+    });
+  } catch {
+    // ignore; video storage can still be private without this marker
   }
 }
 
@@ -52,6 +62,7 @@ export async function nativeDownloadVideo(
   authToken?: string,
   onProgress?: (percent: number) => void
 ): Promise<void> {
+  validateVideoSourceUrl(url);
   await ensureDirs();
 
   const headers: Record<string, string> = {};
@@ -82,10 +93,11 @@ export async function nativeDownloadVideo(
         path: videoFilename(id),
         directory: Directory.Data,
       });
-      if (!stat.size || stat.size < 100_000) {
+      if (!stat.size || stat.size < videoStoragePolicy.minVideoBytes) {
         await nativeDeleteVideo(id);
         throw new Error(`Downloaded file too small (${stat.size ?? 0} bytes)`);
       }
+      assertLooksLikeVideoDownload(undefined, stat.size);
     } catch (e) {
       // If stat fails, fall back to whatever the download reports
       if (!result || (result as any).path == null) throw e;
@@ -166,7 +178,7 @@ export async function nativeListMetas(): Promise<OfflineVideoMeta[]> {
   try {
     await ensureDirs();
     const { files } = await Filesystem.readdir({
-      path: META_DIR,
+      path: videoStoragePolicy.metaDir,
       directory: Directory.Data,
     });
     const metas: OfflineVideoMeta[] = [];

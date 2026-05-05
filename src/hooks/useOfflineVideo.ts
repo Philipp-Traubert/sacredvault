@@ -9,6 +9,7 @@ import {
   nativeDownloadAndStore,
 } from "@/lib/opfs";
 import { isNative } from "@/lib/platform";
+import { assertLooksLikeVideoDownload, validateVideoSourceUrl, videoStoragePolicy } from "@/lib/videoStoragePolicy";
 
 export function useOfflineVideo() {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
@@ -25,6 +26,7 @@ export function useOfflineVideo() {
       setDownloadProgress((p) => ({ ...p, [videoId]: 0 }));
 
       try {
+        validateVideoSourceUrl(videoUrl);
         // Native (Capacitor) path: stream straight to disk via native HTTP.
         // No JS Blob, no Cache API — avoids the mobile browser crashes.
         if (isNative) {
@@ -50,14 +52,7 @@ export function useOfflineVideo() {
 
         const contentType = (response.headers.get("content-type") || "").toLowerCase();
 
-        // Reject any non-video payloads outright
-        if (
-          contentType.includes("text/html") ||
-          contentType.includes("application/json") ||
-          contentType.startsWith("text/")
-        ) {
-          throw new Error(`Server returned non-video payload (${contentType})`);
-        }
+        assertLooksLikeVideoDownload(contentType);
 
         const totalBytes = Number(response.headers.get("content-length") || 0);
         const meta: OfflineVideoMeta = videoMeta ?? {
@@ -98,7 +93,7 @@ export function useOfflineVideo() {
               }));
             }
           }
-          if (received < 100_000) {
+          if (received < videoStoragePolicy.minVideoBytes) {
             await deleteOfflineVideo(videoId);
             throw new Error(`Downloaded stream too small (${received} bytes)`);
           }
@@ -107,7 +102,7 @@ export function useOfflineVideo() {
         } else {
           const blob = await response.blob();
 
-          if (blob.size < 100_000) {
+          if (blob.size < videoStoragePolicy.minVideoBytes) {
             throw new Error(`Downloaded blob too small (${blob.size} bytes)`);
           }
 

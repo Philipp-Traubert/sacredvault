@@ -11,6 +11,15 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+
+# Android local signing/toolchain files
+android/local.properties
+android/**/*.jks
+android/**/*.keystore
+android/**/google-services.json
 
 # Editor directories and files
 .vscode/*

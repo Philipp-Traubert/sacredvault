@@ -1,12 +1,22 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
+const devServerUrl = process.env.CAPACITOR_SERVER_URL || process.env.VITE_CAPACITOR_SERVER_URL;
+const allowCleartextDevServer = process.env.CAPACITOR_ALLOW_CLEARTEXT === "true";
+
 const config: CapacitorConfig = {
-  appId: "app.lovable.45df0f364b514a9886894e8bb9892c9d",
-  appName: "sacredvault",
+  appId: "com.sacredvault.app",
+  appName: "Sacred Video Vault",
   webDir: "dist",
-  server: {
-    url: "https://45df0f36-4b51-4a98-8689-4e8bb9892c9d.lovableproject.com?forceHideBadge=true",
-    cleartext: true,
+  ...(devServerUrl
+    ? {
+        server: {
+          url: devServerUrl,
+          cleartext: allowCleartextDevServer,
+        },
+      }
+    : {}),
+  android: {
+    path: "android",
   },
 };
 
